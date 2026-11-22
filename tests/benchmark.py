@@ -8,6 +8,7 @@ import math
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from statistics import mean, median
 from time import perf_counter
@@ -73,6 +74,7 @@ def measure(args, connection_options=b""):
         "noop": (b"SELECT 1", lambda _: [], 4),
         "tick": (b"SELECT doom.tick($1, $2, 0, 0, $3" + fire + b")", lambda axis: [game, axis, ticks], 8),
         "render": (b"SELECT doom.render($1, $2, $3)", lambda _: [game, width, height], rgb_bytes),
+        "render_columns": (b"SELECT doom.render_columns($1, $2, $3)", lambda _: [game, width, height], rgb_bytes),
         "render_spans": (b"SELECT doom.render_spans($1, $2, $3)", lambda _: [game, width, height], None),
         "render_compact": (b"SELECT doom.render_compact($1, $2, $3)", lambda _: [game, width, height], None),
         "step": (b"SELECT doom.step($1, $2, $3, $4, 0, 0, $5" + fire + b")",
@@ -189,9 +191,31 @@ def measure(args, connection_options=b""):
         lib.PQfinish(connection)
 
 
+@contextmanager
+def connection_options(rtt_ms, mbps):
+    if rtt_ms is None and mbps is None:
+        yield b""
+        return
+
+    command = [sys.executable, "-B", str(Path(__file__).with_name("latency_proxy.py")),
+               "--target-host", os.environ.get("PGHOSTADDR") or os.environ.get("PGHOST", "127.0.0.1"),
+               "--target-port", os.environ.get("PGPORT", "5432"), "--rtt-ms", str(rtt_ms or 0.0)]
+    if mbps is not None:
+        command.extend(("--mbps", str(mbps)))
+    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as proxy:
+        try:
+            port = proxy.stdout.readline().strip()
+            if not port.isdecimal():
+                raise RuntimeError("latency proxy could not start")
+            yield f"hostaddr=127.0.0.1 port={port}".encode()
+        finally:
+            if proxy.poll() is None:
+                proxy.terminate()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("noop", "tick", "render", "render_spans", "render_compact",
+    parser.add_argument("mode", choices=("noop", "tick", "render", "render_columns", "render_spans", "render_compact",
                                          "step", "step_spans", "step_compact", "split", "step_inputs", "split_inputs"))
     parser.add_argument("--game", type=int, default=1)
     parser.add_argument("--width", type=int, default=320)
@@ -214,26 +238,10 @@ def main():
             parser.error("bandwidth must be finite and positive")
         if args.rtt_ms is None:
             args.rtt_ms = 0.0
-    if args.rtt_ms is None:
-        print(json.dumps(measure(args)))
-        return
-    if args.rtt_ms < 0 or not math.isfinite(args.rtt_ms):
+    if args.rtt_ms is not None and (args.rtt_ms < 0 or not math.isfinite(args.rtt_ms)):
         parser.error("RTT must be finite and nonnegative")
-
-    command = [sys.executable, "-B", str(Path(__file__).with_name("latency_proxy.py")),
-               "--target-host", os.environ.get("PGHOSTADDR") or os.environ.get("PGHOST", "127.0.0.1"),
-               "--target-port", os.environ.get("PGPORT", "5432"), "--rtt-ms", str(args.rtt_ms)]
-    if args.mbps is not None:
-        command.extend(("--mbps", str(args.mbps)))
-    with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as proxy:
-        try:
-            port = proxy.stdout.readline().strip()
-            if not port.isdecimal():
-                raise RuntimeError("latency proxy could not start")
-            print(json.dumps(measure(args, f"hostaddr=127.0.0.1 port={port}".encode())))
-        finally:
-            if proxy.poll() is None:
-                proxy.terminate()
+    with connection_options(args.rtt_ms, args.mbps) as options:
+        print(json.dumps(measure(args, options)))
 
 
 if __name__ == "__main__":
