@@ -21,12 +21,17 @@ BEGIN ATOMIC
         WHERE material.level_id = p_level_id
     ), palettes AS MATERIALIZED (
         SELECT needed.light,
-               CASE WHEN needed.light = 255 THEN base.palette ELSE (
-                   SELECT decode(string_agg(lpad(to_hex(
-                       (get_byte(base.palette, channel) * needed.light + 127) / 255
-                   ), 2, '0'), '' ORDER BY channel), 'hex')
-                   FROM generate_series(0, 767) AS channels(channel)
-               ) END AS colors
+               CASE
+                   WHEN needed.light = 255 THEN base.palette
+                   WHEN needed.light BETWEEN 0 AND 254
+                       THEN substring(base.shade_bytes FROM needed.light * 768 + 1 FOR 768)
+                   WHEN needed.light IS NOT NULL THEN (
+                       SELECT decode(string_agg(lpad(to_hex(
+                           (get_byte(base.palette, channel) * needed.light + 127) / 255
+                       ), 2, '0'), '' ORDER BY channel), 'hex')
+                       FROM generate_series(0, 767) AS channels(channel)
+                   )
+               END AS colors
         FROM doom.level_palettes AS base
         CROSS JOIN (
             SELECT DISTINCT spans.light FROM spans

@@ -19,6 +19,7 @@
 \ir renderer.sql
 \ir render_materials.sql
 \ir render_sampling.sql
+\ir render_palette.sql
 \ir render_masks.sql
 \ir render_sprites.sql
 \ir sprite_animation.sql
