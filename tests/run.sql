@@ -14,6 +14,7 @@
 \ir actor_collision.sql
 \ir gates.sql
 \ir fire.sql
+\ir pursuit.sql
 \ir renderer.sql
 \ir render_materials.sql
 \ir render_masks.sql

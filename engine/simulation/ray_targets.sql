@@ -1,5 +1,10 @@
-CREATE FUNCTION doom._ray_target(p_actor doom.actors, p_range double precision, p_z double precision)
-RETURNS bigint
+CREATE TYPE doom._shot_contact AS (
+    actor_id bigint,
+    distance double precision
+);
+
+CREATE FUNCTION doom._ray_hit(p_actor doom.actors, p_range double precision, p_z double precision)
+RETURNS doom._shot_contact
 LANGUAGE plpgsql STABLE STRICT
 AS $$
 DECLARE
@@ -12,7 +17,6 @@ DECLARE
     ray_length double precision := p_range;
     axis_cutoff double precision;
     bucket_reach double precision;
-    target_id bigint;
 BEGIN
     IF p_range < axis_slop OR p_range >= 'Infinity' OR abs(p_z) >= 'Infinity' THEN
         RETURN NULL;
@@ -32,12 +36,13 @@ BEGIN
 
     SELECT ceil(ceil(max(radius)) / 64) INTO bucket_reach FROM doom.actor_types;
 
+    RETURN (
     WITH path AS (
         SELECT span.*,
                max(span.end_t) FILTER (WHERE span.end_blocked) OVER () AS blocked_t
         FROM doom._ray_sectors(p_actor, ray_dx, ray_dy, p_z) AS span
     )
-    SELECT target.actor_id INTO target_id
+    SELECT ROW(target.actor_id, target.distance)::doom._shot_contact
     FROM path
     CROSS JOIN LATERAL (
         SELECT actor.actor_id, contact.distance
@@ -78,8 +83,12 @@ BEGIN
     ) AS target
     WHERE path.start_t < path.end_t
     ORDER BY target.distance, target.actor_id
-    LIMIT 1;
-
-    RETURN target_id;
+    LIMIT 1
+    );
 END;
 $$;
+
+CREATE FUNCTION doom._ray_target(p_actor doom.actors, p_range double precision, p_z double precision)
+RETURNS bigint
+LANGUAGE sql STABLE STRICT
+RETURN (doom._ray_hit(p_actor, p_range, p_z)).actor_id;

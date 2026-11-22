@@ -28,6 +28,7 @@ DECLARE
     player doom.actors;
     controls_player boolean := p_forward <> 0 OR p_strafe <> 0 OR p_turn <> 0;
     has_motion boolean;
+    has_pursuers boolean;
     actor_height double precision;
     actor_radius double precision;
     speed double precision;
@@ -49,18 +50,30 @@ BEGIN
         RAISE EXCEPTION 'game % does not exist', p_game_id USING ERRCODE = '22023';
     END IF;
 
-    -- A tick that waited for this game can now see motions queued by its predecessor.
-    SELECT EXISTS (SELECT FROM doom.ceiling_motions WHERE game_id = p_game_id) INTO has_motion;
-    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion THEN
+    -- Read activity after taking the game lock so this sees its predecessor's committed state.
+    SELECT EXISTS (SELECT FROM doom.ceiling_motions WHERE game_id = p_game_id),
+           EXISTS (
+               SELECT FROM doom.actor_pursuits AS pursuit
+               CROSS JOIN LATERAL (
+                   SELECT FROM doom.actors AS actor
+                   WHERE actor.game_id = p_game_id AND actor.kind = pursuit.kind AND actor.life_state = 'alive'
+                   -- Use the live kind index even when this game has none of the configured actors.
+                   ORDER BY actor.collision_x_bucket
+                   LIMIT 1
+               ) AS living
+           )
+    INTO has_motion, has_pursuers;
+    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion AND NOT has_pursuers THEN
         RETURN new_tick;
     END IF;
 
-    IF controls_player OR p_use OR p_fire THEN
+    IF controls_player OR p_use OR p_fire OR has_pursuers THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
         IF player.life_state = 'dead' THEN
             controls_player := false;
+            has_pursuers := false;
         END IF;
     END IF;
 
@@ -92,16 +105,24 @@ BEGIN
                                       speed * (p_forward * camera_sin + p_strafe * camera_cos),
                                       actor_height, actor_radius);
         END IF;
-        EXIT WHEN NOT controls_player AND NOT has_motion;
+        -- Pursuers see this tic's pose. Otherwise the batch writes it once.
+        IF controls_player AND (has_pursuers OR tic = p_ticks) THEN
+            UPDATE doom.actors AS actor
+            SET x = player.x, y = player.y, z = player.z, angle = player.angle, sector_id = player.sector_id
+            WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
+              AND (actor.x, actor.y, actor.z, actor.angle, actor.sector_id)
+                  IS DISTINCT FROM (player.x, player.y, player.z, player.angle, player.sector_id);
+        END IF;
+        IF has_pursuers THEN
+            player := doom._advance_pursuers(player, new_tick - p_ticks + tic);
+            IF player.health <= 0 THEN
+                controls_player := false;
+                has_pursuers := false;
+                speed := NULL;
+            END IF;
+        END IF;
+        EXIT WHEN NOT controls_player AND NOT has_motion AND NOT has_pursuers;
     END LOOP;
-
-    IF controls_player THEN
-        UPDATE doom.actors AS actor
-        SET x = player.x, y = player.y, z = player.z, angle = player.angle, sector_id = player.sector_id
-        WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
-          AND (actor.x, actor.y, actor.z, actor.angle, actor.sector_id)
-              IS DISTINCT FROM (player.x, player.y, player.z, player.angle, player.sector_id);
-    END IF;
 
     RETURN new_tick;
 END;
