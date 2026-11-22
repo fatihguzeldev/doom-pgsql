@@ -56,8 +56,8 @@ RETURN (
     FROM pieces
 );
 
--- Renders RGB888 from the current transaction snapshot. Rows run top to bottom.
-CREATE FUNCTION doom.render(p_game_id bigint, p_width integer, p_height integer)
+-- Both frame encodings consume the same composited spans from one snapshot.
+CREATE FUNCTION doom._render_frame(p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean)
 RETURNS bytea
 LANGUAGE plpgsql STABLE PARALLEL SAFE
 AS $$
@@ -329,6 +329,16 @@ BEGIN
         spans := doom._render_layer_actors(spans, actor_spans);
     END IF;
 
+    IF p_span_packet THEN
+        SELECT string_agg(
+            int2send(span.row_start::smallint) || int2send(span.column_x::smallint) || span.rgb,
+            ''::bytea ORDER BY span.row_start, span.column_x
+        )
+        INTO frame
+        FROM unnest(spans) AS span;
+        RETURN frame;
+    END IF;
+
     -- A span changes one column's color starting at row_start. Apply those changes
     -- to a single RGB row and reuse it for as many scanlines as stay identical.
     rgb_row := decode(repeat('00', 3 * p_width), 'hex');
@@ -353,3 +363,16 @@ BEGIN
     RETURN frame;
 END;
 $$;
+
+-- RGB888 pixels, left to right and top to bottom.
+CREATE FUNCTION doom.render(p_game_id bigint, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, false);
+
+-- Seven-byte row changes: row and column as big-endian uint16, then RGB888.
+-- Row zero initializes every column. Later rows reuse colors until they change.
+CREATE FUNCTION doom.render_spans(p_game_id bigint, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, true);

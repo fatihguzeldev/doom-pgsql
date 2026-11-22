@@ -1,6 +1,55 @@
 \set ON_ERROR_STOP on
 BEGIN;
 
+CREATE FUNCTION pg_temp.decode_render_spans(p_packet bytea, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    packet_size integer := octet_length(p_packet);
+    packet_offset integer := 0;
+    row_y integer;
+    change_y integer;
+    change_x integer;
+    previous_x integer;
+    rgb_row bytea := decode(repeat('00', 3 * p_width), 'hex');
+    frame bytea := ''::bytea;
+BEGIN
+    IF packet_size IS NULL OR packet_size % 7 <> 0 THEN
+        RAISE EXCEPTION 'A span packet must contain whole seven-byte records';
+    END IF;
+
+    FOR row_y IN 0..p_height - 1 LOOP
+        previous_x := -1;
+        WHILE packet_offset < packet_size LOOP
+            change_y := 256 * get_byte(p_packet, packet_offset) + get_byte(p_packet, packet_offset + 1);
+            EXIT WHEN change_y > row_y;
+            change_x := 256 * get_byte(p_packet, packet_offset + 2) + get_byte(p_packet, packet_offset + 3);
+
+            IF change_y <> row_y OR change_x <= previous_x OR change_x >= p_width
+                OR (row_y = 0 AND change_x <> previous_x + 1)
+            THEN
+                RAISE EXCEPTION 'Span changes must be in bounds and strictly row-major';
+            END IF;
+            rgb_row := overlay(rgb_row PLACING substring(p_packet FROM packet_offset + 5 FOR 3)
+                FROM 3 * change_x + 1 FOR 3);
+            previous_x := change_x;
+            packet_offset := packet_offset + 7;
+        END LOOP;
+
+        IF row_y = 0 AND previous_x <> p_width - 1 THEN
+            RAISE EXCEPTION 'A span packet must initialize every column on row zero';
+        END IF;
+        frame := frame || rgb_row;
+    END LOOP;
+
+    IF packet_offset <> packet_size THEN
+        RAISE EXCEPTION 'A span packet must end inside the frame';
+    END IF;
+    RETURN frame;
+END;
+$$;
+
 DO $$
 DECLARE
     test_level bigint;
@@ -37,6 +86,9 @@ BEGIN
 
     IF octet_length(frame) IS DISTINCT FROM 7 * 9 * 3 THEN
         RAISE EXCEPTION 'Expected a 7x9 packed RGB frame';
+    END IF;
+    IF pg_temp.decode_render_spans(doom.render_spans(test_game, 7, 9), 7, 9) IS DISTINCT FROM frame THEN
+        RAISE EXCEPTION 'Decoded packet must match RGB through an open portal';
     END IF;
 
     -- The middle ray looks through both rooms. These are the colors at column 3.
@@ -97,6 +149,14 @@ BEGIN
     THEN
         RAISE EXCEPTION 'A dead actor must reveal the live actor and leave a darker silhouette on the floor';
     END IF;
+    IF pg_temp.decode_render_spans(doom.render_spans(test_game, 7, 9), 7, 9) IS DISTINCT FROM frame
+        OR pg_temp.decode_render_spans(doom.render_spans(test_game, 259, 7), 259, 7)
+            IS DISTINCT FROM doom.render(test_game, 259, 7)
+        OR pg_temp.decode_render_spans(doom.render_spans(test_game, 17, 541), 17, 541)
+            IS DISTINCT FROM doom.render(test_game, 17, 541)
+    THEN
+        RAISE EXCEPTION 'Actor frame packets must match RGB with odd and multibyte coordinates';
+    END IF;
 
     INSERT INTO doom.games (level_id) VALUES (test_level)
     RETURNING game_id INTO reverse_game;
@@ -127,6 +187,9 @@ BEGIN
 
     IF octet_length(doom.render(test_game, 1, 1)) IS DISTINCT FROM 3 THEN
         RAISE EXCEPTION 'One-pixel frames must still contain one RGB sample';
+    END IF;
+    IF doom.render_spans(test_game, 1, 1) IS DISTINCT FROM decode('00000000D0A010', 'hex') THEN
+        RAISE EXCEPTION 'A one-pixel packet must encode one row, column and RGB sample';
     END IF;
 
     -- One endpoint is behind the camera. The central ray hits the visible part.
@@ -227,6 +290,9 @@ BEGIN
 
     IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('CC2020', 'hex') THEN
         RAISE EXCEPTION 'A ray through a shared vertex must reach the diagonally adjacent room';
+    END IF;
+    IF pg_temp.decode_render_spans(doom.render_spans(test_game, 7, 9), 7, 9) IS DISTINCT FROM frame THEN
+        RAISE EXCEPTION 'Frame packet must preserve shared-vertex visibility';
     END IF;
 
     UPDATE doom.lines SET line_id = line_id + 30 WHERE level_id = test_level AND line_id IN (1, 2);
