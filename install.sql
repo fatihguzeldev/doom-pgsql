@@ -22,6 +22,7 @@ CREATE SCHEMA doom;
 \ir engine/simulation/gate_use.sql
 \ir engine/simulation/ray.sql
 \ir engine/simulation/ray_targets.sql
+\ir engine/simulation/wad_inventory.sql
 \ir engine/simulation/fire.sql
 \ir engine/simulation/pursuit.sql
 \ir engine/simulation/pickups.sql

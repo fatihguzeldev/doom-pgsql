@@ -16,6 +16,7 @@
 \ir actor_collision.sql
 \ir gates.sql
 \ir fire.sql
+\ir wad_inventory.sql
 \ir pursuit.sql
 \ir health_pickups.sql
 \ir renderer.sql
