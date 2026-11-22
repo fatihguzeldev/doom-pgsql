@@ -1,4 +1,4 @@
-"""Add a fixed TCP round-trip delay to a local benchmark with Python 3.11+."""
+"""Simulate fixed RTT and optional TCP bandwidth for a local benchmark with Python 3.11+."""
 
 import argparse
 import asyncio
@@ -20,10 +20,16 @@ async def receive(reader, pending, delay):
             return
 
 
-async def send(writer, pending):
+async def send(writer, pending, mbps):
     clock = asyncio.get_running_loop().time
+    seconds_per_byte = 8e-6 / mbps if mbps is not None else 0
+    serialized_until = 0
     while True:
         ready_at, data = await pending.get()
+        # Each direction has its own timeline. Later chunks queue behind bytes
+        # already on the link without paying propagation delay again.
+        ready_at = max(ready_at, serialized_until) + len(data) * seconds_per_byte
+        serialized_until = ready_at
         wait = ready_at - clock()
         if wait > 0:
             await asyncio.sleep(wait)
@@ -34,7 +40,7 @@ async def send(writer, pending):
         await writer.drain()
 
 
-async def forward(client_reader, client_writer, *, target_host, target_port, delay):
+async def forward(client_reader, client_writer, *, target_host, target_port, delay, mbps=None):
     target_writer = None
     try:
         target_reader, target_writer = await asyncio.open_connection(target_host, target_port)
@@ -43,7 +49,7 @@ async def forward(client_reader, client_writer, *, target_host, target_port, del
                 # Timestamp on receipt so consecutive chunks wait concurrently.
                 pending = asyncio.Queue(maxsize=PENDING_CHUNKS)
                 tasks.create_task(receive(reader, pending, delay))
-                tasks.create_task(send(writer, pending))
+                tasks.create_task(send(writer, pending, mbps))
     except* OSError:
         pass
     finally:
@@ -55,8 +61,10 @@ async def forward(client_reader, client_writer, *, target_host, target_port, del
                 await writer.wait_closed()
 
 
-async def serve(listen_port, target_host, target_port, round_trip_ms):
-    handler = partial(forward, target_host=target_host, target_port=target_port, delay=round_trip_ms / 2000)
+async def serve(listen_port, target_host, target_port, round_trip_ms, mbps):
+    handler = partial(
+        forward, target_host=target_host, target_port=target_port, delay=round_trip_ms / 2000, mbps=mbps
+    )
     server = await asyncio.start_server(handler, "127.0.0.1", listen_port)
     async with server:
         print(server.sockets[0].getsockname()[1], flush=True)
@@ -69,14 +77,19 @@ def main():
     parser.add_argument("--target-host", default="127.0.0.1")
     parser.add_argument("--target-port", type=int, required=True)
     parser.add_argument("--rtt-ms", type=float, required=True, help="total added milliseconds across both directions")
+    parser.add_argument("--mbps", type=float, help="megabits per second in each direction (default: unlimited)")
     args = parser.parse_args()
     if not 0 <= args.listen_port <= 65535 or not 1 <= args.target_port <= 65535:
         parser.error("ports must be in 0..65535, with zero allowed only for --listen-port")
     if args.rtt_ms < 0 or not math.isfinite(args.rtt_ms):
         parser.error("--rtt-ms must be finite and nonnegative")
+    if args.mbps is not None and (
+        args.mbps <= 0 or not math.isfinite(args.mbps) or not math.isfinite(CHUNK_SIZE * 8e-6 / args.mbps)
+    ):
+        parser.error("--mbps must be finite and positive, with a finite chunk transmission time")
 
     try:
-        asyncio.run(serve(args.listen_port, args.target_host, args.target_port, args.rtt_ms))
+        asyncio.run(serve(args.listen_port, args.target_host, args.target_port, args.rtt_ms, args.mbps))
     except KeyboardInterrupt:
         pass
 
