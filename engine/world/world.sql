@@ -99,6 +99,7 @@ CREATE TABLE doom.actors (
 );
 
 CREATE UNIQUE INDEX actors_one_player_per_game ON doom.actors (game_id) WHERE kind = 'player';
+CREATE INDEX actors_in_sector ON doom.actors (game_id, sector_id);
 -- Movement within a bucket can still use a heap-only update.
 CREATE INDEX actors_collision_x_bucket ON doom.actors (game_id, collision_x_bucket);
 
