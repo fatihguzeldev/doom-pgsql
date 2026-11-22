@@ -1,7 +1,30 @@
+CREATE FUNCTION doom._shade_palette(p_palette bytea)
+RETURNS bytea
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN CASE WHEN octet_length(p_palette) = 768 THEN (
+    -- Pack contiguous channels into network-order words to keep the aggregate small.
+    SELECT string_agg(int8send(
+        (((get_byte(p_palette, first_byte) * light + 127) / 255)::bigint << 56)
+        | (((get_byte(p_palette, first_byte + 1) * light + 127) / 255)::bigint << 48)
+        | (((get_byte(p_palette, first_byte + 2) * light + 127) / 255)::bigint << 40)
+        | (((get_byte(p_palette, first_byte + 3) * light + 127) / 255)::bigint << 32)
+        | (((get_byte(p_palette, first_byte + 4) * light + 127) / 255)::bigint << 24)
+        | (((get_byte(p_palette, first_byte + 5) * light + 127) / 255)::bigint << 16)
+        | (((get_byte(p_palette, first_byte + 6) * light + 127) / 255)::bigint << 8)
+        | ((get_byte(p_palette, first_byte + 7) * light + 127) / 255)
+    ), '\x'::bytea ORDER BY word)
+    FROM generate_series(0, 256 * 768 / 8 - 1) AS word
+    CROSS JOIN LATERAL (SELECT word / (768 / 8) AS light, word % (768 / 8) * 8 AS first_byte) AS source
+) END;
+
 CREATE TABLE doom.level_palettes (
     level_id bigint PRIMARY KEY REFERENCES doom.levels ON DELETE CASCADE,
-    palette bytea NOT NULL CHECK (octet_length(palette) = 768)
+    palette bytea NOT NULL CHECK (octet_length(palette) = 768),
+    shade_bytes bytea GENERATED ALWAYS AS (doom._shade_palette(palette)) STORED
 );
+
+-- The renderer reads individual 768-byte variants through uncompressed TOAST slices.
+ALTER TABLE doom.level_palettes ALTER COLUMN shade_bytes SET STORAGE EXTERNAL;
 
 CREATE TABLE doom.level_materials (
     level_id bigint NOT NULL REFERENCES doom.levels ON DELETE CASCADE,
@@ -24,6 +47,8 @@ DECLARE
     wall_names text[];
     flat_names text[];
     palette_location integer[];
+    incoming_palette bytea;
+    stored_palette bytea;
     flat_locations jsonb;
     flat_location jsonb;
     flat_name text;
@@ -76,9 +101,16 @@ BEGIN
         RAISE EXCEPTION 'PLAYPAL must contain complete 256-color RGB palettes' USING ERRCODE = '22023';
     END IF;
 
-    INSERT INTO doom.level_palettes (level_id, palette)
-    VALUES (p_level_id, substring(p_wad FROM palette_location[1] + 1 FOR 768))
-    ON CONFLICT (level_id) DO UPDATE SET palette = EXCLUDED.palette;
+    incoming_palette := substring(p_wad FROM palette_location[1] + 1 FOR 768);
+    SELECT palette INTO stored_palette FROM doom.level_palettes
+    WHERE level_id = p_level_id FOR NO KEY UPDATE;
+    -- An upsert of an existing palette would generate its shades twice.
+    IF NOT FOUND THEN
+        INSERT INTO doom.level_palettes (level_id, palette) VALUES (p_level_id, incoming_palette)
+        ON CONFLICT (level_id) DO UPDATE SET palette = EXCLUDED.palette;
+    ELSIF stored_palette IS DISTINCT FROM incoming_palette THEN
+        UPDATE doom.level_palettes SET palette = incoming_palette WHERE level_id = p_level_id;
+    END IF;
     DELETE FROM doom.level_materials WHERE level_id = p_level_id AND surface_kind IN ('wall', 'flat');
 
     IF wall_names IS NOT NULL THEN

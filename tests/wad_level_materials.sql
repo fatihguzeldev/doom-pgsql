@@ -40,6 +40,7 @@ DECLARE
     main_level bigint;
     second_level bigint;
     test_game bigint;
+    palette_tuple tid;
     observed record;
 BEGIN
     SELECT decode(string_agg(lpad(to_hex((sample % 64 + 3 * (sample / 64)) % 256), 2, '0'), ''
@@ -67,6 +68,14 @@ BEGIN
     END IF;
     IF (SELECT count(*) FROM doom.level_materials WHERE level_id = main_level) <> 2 THEN
         RAISE EXCEPTION 'expected one distinct material of each kind';
+    END IF;
+
+    SELECT ctid INTO STRICT palette_tuple FROM doom.level_palettes WHERE level_id = main_level;
+    UPDATE doom.level_materials SET pixels = '\x0000'
+    WHERE level_id = main_level AND surface_kind = 'wall' AND name = 'PANEL';
+    PERFORM doom.import_wad_materials(main_level, archive);
+    IF (SELECT ctid FROM doom.level_palettes WHERE level_id = main_level) IS DISTINCT FROM palette_tuple THEN
+        RAISE EXCEPTION 'reimport with the same palette should reuse its stored shades';
     END IF;
 
     SELECT width, height, pixels, coverage INTO observed FROM doom.level_materials
