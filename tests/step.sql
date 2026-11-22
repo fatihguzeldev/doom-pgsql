@@ -12,7 +12,7 @@ BEGIN
     INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height)
     VALUES (test_level, 0, 0, 64);
     INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id)
-    VALUES (test_level, 0, 24, 48, 24, -48, 0);
+    VALUES (test_level, 0, 48, 48, 48, -48, 0);
 
     test_game := doom.start_game(test_level, 0, 0, 0);
     before_frame := doom.render(test_game, 16, 64);

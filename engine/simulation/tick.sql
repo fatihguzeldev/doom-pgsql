@@ -26,6 +26,7 @@ DECLARE
     new_tick bigint;
     player doom.actors;
     actor_height double precision;
+    actor_radius double precision;
     speed double precision;
     camera_cos double precision;
     camera_sin double precision;
@@ -56,7 +57,8 @@ BEGIN
     END IF;
 
     IF p_forward <> 0 OR p_strafe <> 0 THEN
-        SELECT height INTO STRICT actor_height FROM doom.actor_types WHERE kind = player.kind;
+        SELECT height, radius INTO STRICT actor_height, actor_radius
+        FROM doom.actor_types WHERE kind = player.kind;
         speed := 8 / greatest(1.0, sqrt(p_forward * p_forward + p_strafe * p_strafe));
     END IF;
 
@@ -66,7 +68,8 @@ BEGIN
             camera_cos := cos(player.angle);
             camera_sin := sin(player.angle);
             player := doom.move_actor(player, speed * (p_forward * camera_cos - p_strafe * camera_sin),
-                                      speed * (p_forward * camera_sin + p_strafe * camera_cos), actor_height);
+                                      speed * (p_forward * camera_sin + p_strafe * camera_cos),
+                                      actor_height, actor_radius);
         END IF;
     END LOOP;
 

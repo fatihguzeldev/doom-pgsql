@@ -11,6 +11,7 @@ CREATE SCHEMA doom;
 \ir engine/wad/textures.sql
 \ir engine/wad/level_materials.sql
 \ir engine/wad/sprites.sql
+\ir engine/simulation/collision.sql
 \ir engine/simulation/movement.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/level_start.sql

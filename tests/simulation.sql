@@ -28,7 +28,8 @@ BEGIN
 
     ASSERT doom.tick(game, 1, 0, 0, 4) = 4, 'batch advances four tics';
     SELECT * INTO STRICT player FROM doom.actors WHERE game_id = game AND kind = 'player';
-    ASSERT player.sector_id = 0 AND player.x < 64, 'closed portal blocks movement';
+    ASSERT player.sector_id = 0 AND abs(player.x - 48) < 0.00002,
+        'closed portal blocks the player at one radius away';
 
     UPDATE doom.sector_state SET ceiling_height = 96 WHERE game_id = game AND sector_id = 1;
     PERFORM doom.tick(game, 1, 0, 0, 4);
@@ -40,7 +41,7 @@ BEGIN
     PERFORM doom.tick(stepped_game, 1, 0, 0);
     SELECT * INTO STRICT player FROM doom.actors WHERE game_id = game AND kind = 'player';
     SELECT * INTO STRICT stepped_player FROM doom.actors WHERE game_id = stepped_game AND kind = 'player';
-    ASSERT player.x < 128 AND player.x > 120, 'solid perimeter blocks repeated movement';
+    ASSERT abs(player.x - 112) < 0.00002, 'solid perimeter leaves room for the player radius';
     ASSERT player.x = stepped_player.x AND player.sector_id = stepped_player.sector_id,
         'independently stepped movement reaches the same wall';
 
