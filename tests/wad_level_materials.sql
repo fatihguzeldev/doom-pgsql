@@ -29,7 +29,7 @@ DO $$
 DECLARE
     main_palette bytea := decode(repeat('123456', 256), 'hex');
     other_palette bytea := decode(repeat('aabbcc', 256), 'hex');
-    wall_patch bytea := decode('0200 0100 0000 0000 10000000 16000000 0001000700ff 0001000000ff', 'hex');
+    wall_patch bytea := decode('0200 0100 0000 0000 10000000 16000000 0001000700ff ff', 'hex');
     texture_catalog bytea := decode(
         '01000000 08000000 50414e454c000000 00000000 0200 0100 00000000 0100' ||
         '0000 0000 0000 0000 0000', 'hex');
@@ -72,7 +72,7 @@ BEGIN
     SELECT width, height, pixels, coverage INTO observed FROM doom.level_materials
     WHERE level_id = main_level AND surface_kind = 'wall' AND name = 'PANEL';
     IF ROW(observed.width, observed.height, observed.pixels, observed.coverage)
-        IS DISTINCT FROM ROW(2, 1, '\x0700'::bytea, '\xffff'::bytea)
+        IS DISTINCT FROM ROW(2, 1, '\x0700'::bytea, '\xff00'::bytea)
     THEN
         RAISE EXCEPTION 'incorrect imported wall material: %', observed;
     END IF;
@@ -93,6 +93,23 @@ BEGIN
         OR doom.render_spans(test_game, 1, 1) IS DISTINCT FROM '\x000000000b2136'::bytea
     THEN
         RAISE EXCEPTION 'imported wall palette and texture did not reach both frame formats';
+    END IF;
+
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, light_level)
+    VALUES (main_level, 1, 0, 128, 255);
+    UPDATE doom.lines SET back_sector_id = 1 WHERE level_id = main_level AND line_id = 0;
+    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id, wall_color)
+    VALUES (main_level, 1, 0, 32, 64, 32, 1, 1122867);
+    UPDATE doom.line_surfaces SET y_offset = -87 WHERE level_id = main_level AND line_id = 0;
+
+    IF doom.render(test_game, 1, 1) IS DISTINCT FROM '\x0b2136'::bytea THEN
+        RAISE EXCEPTION 'opaque imported portal texel did not cover the rear wall';
+    END IF;
+    UPDATE doom.actors SET x = 33 WHERE game_id = test_game AND kind = 'player';
+    IF doom.render(test_game, 1, 1) IS DISTINCT FROM '\x112233'::bytea
+        OR doom.render_spans(test_game, 1, 1) IS DISTINCT FROM '\x00000000112233'::bytea
+    THEN
+        RAISE EXCEPTION 'transparent imported portal texel did not reveal the rear wall';
     END IF;
 
     PERFORM doom.import_wad_materials(second_level,
