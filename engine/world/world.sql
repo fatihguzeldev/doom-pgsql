@@ -110,6 +110,8 @@ CREATE UNIQUE INDEX actors_one_player_per_game ON doom.actors (game_id) WHERE ki
 CREATE INDEX actors_in_sector ON doom.actors (game_id, sector_id);
 -- Movement within a bucket can still use a heap-only update.
 CREATE INDEX actors_collision_x_bucket ON doom.actors (game_id, collision_x_bucket);
+CREATE INDEX actors_live_by_kind_and_bucket ON doom.actors (game_id, kind, collision_x_bucket)
+WHERE life_state = 'alive';
 
 CREATE FUNCTION doom.sector_at(p_level_id bigint, p_x double precision, p_y double precision)
 RETURNS integer
