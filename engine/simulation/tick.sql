@@ -22,11 +22,13 @@ CREATE FUNCTION doom.tick(
 )
 RETURNS bigint
 LANGUAGE plpgsql
+SET plan_cache_mode = force_generic_plan
 AS $$
 DECLARE
     new_tick bigint;
     game_level_id bigint;
     player doom.actors;
+    player_settings record;
     controls_player boolean := p_forward <> 0 OR p_strafe <> 0 OR p_turn <> 0;
     has_motion boolean;
     has_floor_motion boolean;
@@ -45,9 +47,6 @@ DECLARE
     line_id integer;
     shot_reach double precision;
     sector_effect record;
-    actor_height double precision;
-    actor_radius double precision;
-    max_health integer;
     speed double precision;
     camera_cos double precision;
     camera_sin double precision;
@@ -123,8 +122,13 @@ BEGIN
     IF controls_player OR p_use OR p_fire OR has_pursuers OR has_pickups OR has_wad_items
         OR has_sector_effects OR has_floor_motion OR has_encounters OR exit_sectors IS NOT NULL THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
-        SELECT * INTO STRICT player FROM doom.actors
-        WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
+        SELECT actor AS state, kind.height, kind.radius, kind.default_health
+        INTO STRICT player_settings
+        FROM doom.actors AS actor
+        JOIN doom.actor_types AS kind ON kind.kind = actor.kind
+        WHERE actor.game_id = p_game_id AND actor.kind = 'player'
+        FOR NO KEY UPDATE OF actor;
+        player := player_settings.state;
         IF player.life_state = 'dead' THEN
             controls_player := false;
             has_pursuers := false;
@@ -137,11 +141,6 @@ BEGIN
     IF controls_player AND (p_forward <> 0 OR p_strafe <> 0) THEN
         speed := 8 / greatest(1.0, sqrt(p_forward * p_forward + p_strafe * p_strafe));
     END IF;
-    IF speed IS NOT NULL OR has_pickups OR has_wad_items THEN
-        SELECT height, radius, default_health INTO STRICT actor_height, actor_radius, max_health
-        FROM doom.actor_types WHERE kind = player.kind;
-    END IF;
-
     FOR tic IN 1..p_ticks LOOP
         current_tick := new_tick - p_ticks + tic;
         pending_exit := NULL;
@@ -190,7 +189,7 @@ BEGIN
             camera_sin := sin(player.angle);
             player := doom.move_actor(player, speed * (p_forward * camera_cos - p_strafe * camera_sin),
                                       speed * (p_forward * camera_sin + p_strafe * camera_cos),
-                                      actor_height, actor_radius);
+                                      player_settings.height, player_settings.radius);
             IF has_cross_actions THEN
                 line_event := doom._cross_line_actions(before_move, player);
                 player := line_event.player;
@@ -199,11 +198,12 @@ BEGIN
                 pending_exit := line_event.exit_kind;
             END IF;
         END IF;
-        IF has_pickups AND player.health < max_health THEN
-            player.health := doom._collect_health(player, actor_height, actor_radius, max_health);
+        IF has_pickups AND player.health < player_settings.default_health THEN
+            player.health := doom._collect_health(player, player_settings.height, player_settings.radius,
+                                                  player_settings.default_health);
         END IF;
         IF has_wad_items THEN
-            PERFORM doom._collect_wad_items(player, actor_height, actor_radius);
+            PERFORM doom._collect_wad_items(player, player_settings.height, player_settings.radius);
         END IF;
         IF has_sector_effects AND player.health > 0 AND (current_tick % 32 = 0 OR player.health <= 10) THEN
             SELECT * INTO sector_effect FROM doom._wad_sector_health(player, current_tick);
