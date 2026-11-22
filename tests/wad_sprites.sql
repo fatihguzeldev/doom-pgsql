@@ -35,6 +35,8 @@ DECLARE
     archive bytea;
     tested_level bigint;
     empty_level bigint;
+    test_game bigint;
+    frame bytea;
     observed record;
 BEGIN
     INSERT INTO doom.levels (name) VALUES ('sprite import') RETURNING level_id INTO tested_level;
@@ -53,6 +55,23 @@ BEGIN
         OR (SELECT lp.palette FROM doom.level_palettes AS lp WHERE level_id = tested_level) IS DISTINCT FROM palette
     THEN
         RAISE EXCEPTION 'sprite selection, pivot, coverage or initial palette was incorrect: %', observed;
+    END IF;
+
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, light_level)
+    VALUES (tested_level, 0, 0, 128, 255);
+    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id, wall_color)
+    VALUES (tested_level, 0, 16, 16, 16, -16, 0, 1056816);
+    INSERT INTO doom.actor_types (kind, default_health, radius, sprite_material)
+    VALUES ('wad sprite specimen', 1, 0, 'token');
+    test_game := doom.start_game(tested_level, 0, 0, 0);
+    INSERT INTO doom.actors (game_id, sector_id, kind, x, y, z)
+    VALUES (test_game, 0, 'wad sprite specimen', 8, 0, 39);
+    frame := doom.render(test_game, 16, 3);
+    IF substring(frame FROM 31 FOR 3) IS DISTINCT FROM '\x123456'::bytea
+        OR substring(frame FROM 34 FOR 3) IS DISTINCT FROM '\x102030'::bytea
+        OR substring(frame FROM 82 FOR 3) IS DISTINCT FROM '\x123456'::bytea
+    THEN
+        RAISE EXCEPTION 'imported sprite pivot, opaque index zero or coverage hole did not reach the frame';
     END IF;
 
     INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height, pixels, coverage)
