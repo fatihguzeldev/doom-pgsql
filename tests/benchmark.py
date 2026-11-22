@@ -13,7 +13,8 @@ from statistics import mean, median
 from time import perf_counter
 
 
-COMPACT_MODES = {"render_compact", "step_compact"}
+INPUT_MODES = {"step_inputs", "split_inputs"}
+COMPACT_MODES = {"render_compact", "step_compact", *INPUT_MODES}
 
 
 def libpq():
@@ -54,6 +55,12 @@ def checked_result(lib, connection, result, expected_status):
     return result
 
 
+def input_array(commands):
+    rows = [b'"(' + b",".join((forward, strafe, b"0", b"1", b"false", fire)) + b')"'
+            for forward, strafe, fire in commands]
+    return b"{" + b",".join(rows) + b"}"
+
+
 def measure(args, connection_options=b""):
     lib = libpq()
     game = str(args.game).encode()
@@ -74,8 +81,32 @@ def measure(args, connection_options=b""):
                        lambda axis: [game, width, height, axis, ticks], None),
         "step_compact": (b"SELECT doom.step_compact($1, $2, $3, $4, 0, 0, $5" + fire + b")",
                          lambda axis: [game, width, height, axis, ticks], None),
+        "step_inputs": (b"SELECT doom.step_inputs($1, $2, $3, $4::doom.input_command[])",
+                        lambda commands: [game, width, height, input_array(commands)], None),
+        "tick_input": (b"SELECT doom.tick($1, $2, $3, 0, 1, false, $4)",
+                       lambda command: [game, *command], 8),
+        "split_inputs": (b"SELECT doom.step_compact($1, $2, $3, $4, $5, 0, 1, false, $6)",
+                         lambda command: [game, width, height, *command], None),
     }
-    operations = ("tick", "render") if args.mode == "split" else (args.mode,)
+    operations = {
+        "split": ("tick", "render"),
+        "split_inputs": ("tick_input", "tick_input", "tick_input", "split_inputs"),
+    }.get(args.mode, (args.mode,))
+
+    def sample_arguments(i):
+        axis = b"0.125" if i % 2 == 0 else b"-0.125"
+        if args.mode not in INPUT_MODES:
+            return (axis,) * len(operations)
+        reverse = b"-0.125" if i % 2 == 0 else b"0.125"
+        strafe = b"0.25" if i % 2 == 0 else b"-0.25"
+        commands = (
+            (axis, b"0", b"false"),
+            (reverse, b"0", b"false"),
+            (b"0", strafe, b"false"),
+            (b"0", reverse, b"true" if args.fire else b"false"),
+        )
+        return commands if args.mode == "split_inputs" else (commands,)
+
     connection = lib.PQconnectdb(connection_options)
     if not connection:
         raise RuntimeError("libpq could not allocate a connection")
@@ -83,22 +114,23 @@ def measure(args, connection_options=b""):
     try:
         if lib.PQstatus(connection) != 0:
             raise RuntimeError(lib.PQerrorMessage(connection).decode().strip())
-        for name in operations:
+        for name, argument in dict(zip(operations, sample_arguments(0))).items():
             query, parameters, _ = queries[name]
-            result = lib.PQprepare(connection, name.encode(), query, len(parameters(b"0")), None)
+            result = lib.PQprepare(connection, name.encode(), query, len(parameters(argument)), None)
             lib.PQclear(checked_result(lib, connection, result, 1))
 
         samples = []
         payload_sizes = []
         encodings = {"rgb": 0, "spans": 0}
         elapsed = 0.0
+        first_clock = None
         for i in range(args.warmup + args.samples):
-            axis = b"0.125" if i % 2 == 0 else b"-0.125"
+            arguments = sample_arguments(i)
             sample_bytes = 0
             started = perf_counter()
-            for name in operations:
+            for operation_index, (name, argument) in enumerate(zip(operations, arguments)):
                 _, parameters, size = queries[name]
-                values = parameters(axis)
+                values = parameters(argument)
                 params = (C.c_char_p * len(values))(*values)
                 result = lib.PQexecPrepared(connection, name.encode(), len(values), params, None, None, 1)
                 result = checked_result(lib, connection, result, 2)
@@ -123,6 +155,12 @@ def measure(args, connection_options=b""):
                         raise RuntimeError(f"{name} did not return a nonempty sequence of 7-byte RGB changes")
                     if size is not None and result_bytes != size:
                         raise RuntimeError(f"{name} did not return the expected {size}-byte result")
+                    if name == "tick_input":
+                        clock = int.from_bytes(C.string_at(lib.PQgetvalue(result, 0, 0), 8), "big", signed=True)
+                        if first_clock is None:
+                            first_clock = clock
+                        if clock < 1 or clock != first_clock + i * len(operations) + operation_index:
+                            raise RuntimeError(f"{name} did not advance the game clock by one tic")
                     sample_bytes += result_bytes
                 finally:
                     lib.PQclear(result)
@@ -154,20 +192,22 @@ def measure(args, connection_options=b""):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("noop", "tick", "render", "render_spans", "render_compact",
-                                         "step", "step_spans", "step_compact", "split"))
+                                         "step", "step_spans", "step_compact", "split", "step_inputs", "split_inputs"))
     parser.add_argument("--game", type=int, default=1)
     parser.add_argument("--width", type=int, default=320)
     parser.add_argument("--height", type=int, default=200)
     parser.add_argument("--ticks", type=int, default=1)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--samples", type=int, default=100)
-    parser.add_argument("--fire", action="store_true", help="fire once per simulation request")
+    parser.add_argument("--fire", action="store_true", help="fire once per sample in a simulation mode")
     parser.add_argument("--rtt-ms", type=float, help="add this TCP round-trip delay using the local proxy")
     parser.add_argument("--mbps", type=float, help="limit TCP throughput in each direction using the local proxy")
     args = parser.parse_args()
     if args.warmup < 0 or min(args.samples, args.width, args.height, args.ticks) < 1:
         parser.error("sample count, width, height and tick count must be positive")
-    if args.fire and args.mode not in {"tick", "step", "step_spans", "step_compact", "split"}:
+    if args.mode in INPUT_MODES and args.ticks != 1:
+        parser.error("input modes always use four one-tic commands")
+    if args.fire and args.mode not in {"tick", "step", "step_spans", "step_compact", "split", *INPUT_MODES}:
         parser.error("--fire requires a simulation mode")
     if args.mbps is not None:
         if args.mbps <= 0 or not math.isfinite(args.mbps):
