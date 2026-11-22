@@ -83,3 +83,23 @@ RETURN (
     )
     FROM doom._sample_render_rows(p_level_id, p_spans, p_center_y, p_span_packet) AS sampled
 );
+
+CREATE FUNCTION doom._render_change_count(p_level_id bigint, p_spans doom._render_span[])
+RETURNS bigint
+LANGUAGE sql STABLE STRICT PARALLEL SAFE
+RETURN cardinality(p_spans)::bigint + CASE
+    WHEN EXISTS (SELECT FROM doom.level_palettes WHERE level_id = p_level_id) THEN (
+        -- A span always emits its start. Only sampleable mappings emit the remaining rows.
+        SELECT coalesce(sum(needed.extra_rows), 0)::bigint
+        FROM (
+            SELECT (span.mapping).surface_kind AS surface_kind,
+                   upper((span.mapping).material_name COLLATE "C") AS material_name,
+                   sum(span.row_end - span.row_start - 1) AS extra_rows
+            FROM unnest(p_spans) AS span
+            WHERE (span.mapping).light IS NOT NULL AND (span.mapping).material_name IS NOT NULL
+              AND span.row_end - span.row_start > 1
+            GROUP BY 1, 2
+        ) AS needed
+        JOIN doom.level_materials AS material ON material.level_id = p_level_id
+            AND material.surface_kind = needed.surface_kind AND material.name = needed.material_name
+    ) ELSE 0 END;

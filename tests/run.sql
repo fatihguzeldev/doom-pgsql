@@ -17,6 +17,7 @@
 \ir fire.sql
 \ir pursuit.sql
 \ir renderer.sql
+\ir render_compact.sql
 \ir render_materials.sql
 \ir render_sampling.sql
 \ir render_palette.sql

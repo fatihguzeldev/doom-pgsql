@@ -54,7 +54,9 @@ RETURN (
 
 -- Both frame encodings consume the same composited spans from one snapshot.
 -- Estimated texture sampling cost can trigger LLVM compilation for a small frame.
-CREATE FUNCTION doom._render_frame(p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean)
+CREATE FUNCTION doom._render_frame(
+    p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean, p_compact boolean DEFAULT false
+)
 RETURNS bytea
 LANGUAGE plpgsql STABLE PARALLEL SAFE
 SET jit = off
@@ -94,6 +96,8 @@ DECLARE
     row_patch record;
     has_mapped_spans boolean;
     change_count bigint;
+    rgb_size bigint;
+    format_tag bytea;
     rgb_row bytea;
     current_row_y integer := 0;
     frame_parts bytea[] := ARRAY[]::bytea[];
@@ -475,19 +479,30 @@ BEGIN
                sum(CASE WHEN (span.mapping).material_name IS NOT NULL THEN span.row_end - span.row_start ELSE 1 END)
         INTO has_mapped_spans, change_count
         FROM unnest(spans) AS span;
+    END IF;
 
-        IF has_mapped_spans THEN
-            -- At higher change densities the scanline patches cost more than a direct RGB aggregate.
-            IF p_span_packet OR change_count > p_width::bigint * p_height * 45 / 100 THEN
-                RETURN doom._sample_render_frame(camera.level_id, spans, center_y, p_span_packet);
-            END IF;
-
-            -- Sample the textured pixels and reuse the solid spans as scanline changes.
-            SELECT array_agg(ROW(sample.ordinal & 65535, sample.ordinal >> 16,
-                                 (sample.ordinal >> 16) + 1, sample.rgb, NULL)::doom._render_span)
-            INTO spans
-            FROM doom._sample_render_rows(camera.level_id, spans, center_y, true) AS sample;
+    IF p_compact THEN
+        rgb_size := 3 * p_width::bigint * p_height;
+        p_span_packet := 7 * cardinality(spans)::bigint < rgb_size;
+        -- Consult the material catalog only if the lower and upper counts choose different encodings.
+        IF p_span_packet AND has_mapped_spans AND 7 * change_count >= rgb_size THEN
+            p_span_packet := 7 * doom._render_change_count(camera.level_id, spans) < rgb_size;
         END IF;
+        format_tag := CASE WHEN p_span_packet THEN '\x01'::bytea ELSE '\x00'::bytea END;
+    END IF;
+
+    IF has_mapped_spans THEN
+        -- At higher change densities the scanline patches cost more than a direct RGB aggregate.
+        IF p_span_packet OR change_count > p_width::bigint * p_height * 45 / 100 THEN
+            frame := doom._sample_render_frame(camera.level_id, spans, center_y, p_span_packet);
+            RETURN CASE WHEN p_compact THEN format_tag || frame ELSE frame END;
+        END IF;
+
+        -- Sample the textured pixels and reuse the solid spans as scanline changes.
+        SELECT array_agg(ROW(sample.ordinal & 65535, sample.ordinal >> 16,
+                             (sample.ordinal >> 16) + 1, sample.rgb, NULL)::doom._render_span)
+        INTO spans
+        FROM doom._sample_render_rows(camera.level_id, spans, center_y, true) AS sample;
     END IF;
 
     IF p_span_packet THEN
@@ -497,7 +512,7 @@ BEGIN
         )
         INTO frame
         FROM unnest(spans) AS span;
-        RETURN frame;
+        RETURN CASE WHEN p_compact THEN format_tag || frame ELSE frame END;
     END IF;
 
     -- A span changes one column's color starting at row_start. Apply those changes
@@ -521,7 +536,7 @@ BEGIN
     INTO frame
     FROM unnest(frame_parts) WITH ORDINALITY AS part(data, n);
 
-    RETURN frame;
+    RETURN CASE WHEN p_compact THEN format_tag || frame ELSE frame END;
 END;
 $$;
 
@@ -537,3 +552,10 @@ CREATE FUNCTION doom.render_spans(p_game_id bigint, p_width integer, p_height in
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
 RETURN doom._render_frame(p_game_id, p_width, p_height, true);
+
+-- A one-byte tag (0 for RGB888, 1 for spans) precedes the smaller body.
+-- Equal body sizes use RGB888.
+CREATE FUNCTION doom.render_compact(p_game_id bigint, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, true);
