@@ -91,11 +91,11 @@ finish_peers() {
 }
 
 assert_player() {
-    actual=$(db -c "SELECT g.tick_number, a.health, a.x
+    actual=$(db -c "SELECT g.tick_number, a.health, a.x, a.animation_start_tick
         FROM doom.games AS g JOIN doom.actors AS a USING (game_id)
         WHERE g.game_id = $game_id AND a.kind = 'player'")
     if [ "$actual" != "$1" ]; then
-        printf 'expected tick|health|x = %s, observed %s\n' "$1" "$actual" >&2
+        printf 'expected tick|health|x|animation anchor = %s, observed %s\n' "$1" "$actual" >&2
         return 1
     fi
 }
@@ -126,20 +126,28 @@ PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id, 1)" >"$scratch/tick.log"
 tick_pid=$!
 wait_for_peer "$tick_app" blocked
 finish_peers
-assert_player '1|0|128'
+assert_player '1|0|128|0'
 
-# Ticks serialize, while independent actor inserts can commit during a tick transaction.
+# Independent actor edits use the last committed clock while ticks serialize.
 db -c "UPDATE doom.actors SET health = 100 WHERE game_id = $game_id AND kind = 'player'"
 start_owner "SELECT doom.tick($game_id, 1, 0, 0, 2)"
 PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id, 1, 0, 0, 3)" >"$scratch/tick.log" 2>&1 3>&- &
 tick_pid=$!
 wait_for_peer "$tick_app" blocked
-db -v game_id="$game_id" -v actor_kind="$actor_kind" <<'SQL'
+observed_actor=$(db -v game_id="$game_id" -v actor_kind="$actor_kind" <<'SQL'
 BEGIN;
 SET LOCAL lock_timeout = '1s';
-INSERT INTO doom.actors (game_id, kind, x, y) VALUES (:game_id, :'actor_kind', 400, 400);
+INSERT INTO doom.actors (game_id, kind, x, y) VALUES (:game_id, :'actor_kind', 400, 400)
+RETURNING animation_start_tick;
+UPDATE doom.actors SET health = 0 WHERE game_id = :game_id AND kind = :'actor_kind'
+RETURNING animation_start_tick;
 COMMIT;
 SQL
+)
+if [ "$observed_actor" != "$(printf '%s\n' 1 1)" ]; then
+    printf 'expected both edits to use committed tick 1, observed %s\n' "$observed_actor" >&2
+    exit 1
+fi
 finish_peers
-assert_player '6|100|168'
-printf 'Concurrent tick, SQL edit and spawn checks passed.\n'
+assert_player '6|100|168|1'
+printf 'Concurrent tick, SQL edit, spawn and animation checks passed.\n'
