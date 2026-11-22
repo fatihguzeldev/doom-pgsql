@@ -25,6 +25,7 @@ CREATE SCHEMA doom;
 \ir engine/simulation/pursuit.sql
 \ir engine/simulation/pickups.sql
 \ir engine/simulation/tick.sql
+\ir engine/simulation/inputs.sql
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql
 \ir engine/renderer/materials.sql

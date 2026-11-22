@@ -26,3 +26,4 @@
 \ir render_sprites.sql
 \ir sprite_animation.sql
 \ir step.sql
+\ir input_batches.sql
