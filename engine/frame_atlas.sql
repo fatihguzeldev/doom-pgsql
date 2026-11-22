@@ -35,6 +35,9 @@ DECLARE
     stride integer;
     swapped boolean;
 BEGIN
+    IF p_length NOT BETWEEN 1 AND 160 THEN
+        RAISE EXCEPTION 'floor sample length must be within the viewport' USING ERRCODE = '22023';
+    END IF;
     i := 0;
     sample_count := p_length;
     IF p_width NOT BETWEEN 4 AND 64 OR (p_width & (p_width - 1)) <> 0

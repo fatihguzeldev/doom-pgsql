@@ -8,6 +8,12 @@ DECLARE
     expected bytea;
     selected_mip integer;
 BEGIN
+    BEGIN
+        PERFORM doom._flat_atlas_chunks(64, 0, 0, 1, 1, 161);
+        RAISE EXCEPTION 'atlas sampler accepted an oversized run';
+    EXCEPTION WHEN invalid_parameter_value THEN
+        NULL;
+    END;
     INSERT INTO doom.levels (name) VALUES ('atlas') RETURNING level_id INTO map;
     INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, floor_material)
         VALUES (map, 0, 0, 64, 'ATLAS');
