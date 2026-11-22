@@ -260,4 +260,36 @@ if [ "$health" != 80 ]; then
     exit 1
 fi
 
-printf 'Concurrent ticks, SQL edits, contacts, gates and shot damage checks passed.\n'
+# Pursuit defers a locked actor and observes SQL death and revival on later ticks.
+db -v actor_kind="$actor_kind" <<'SQL'
+INSERT INTO doom.actor_pursuits (kind, sight_range, move_distance, interval_ticks)
+VALUES (:'actor_kind', 256, 4, 1);
+SQL
+start_owner "UPDATE doom.actors SET health = 0 WHERE game_id = $game_id AND actor_id = $target_id"
+unmoved=$(db -v game_id="$game_id" -v target_id="$target_id" <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '1s';
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT x = 300 AND health = 80 FROM doom.actors WHERE game_id = :game_id AND actor_id = :target_id;
+COMMIT;
+SQL
+)
+if [ "$unmoved" != t ]; then
+    printf 'expected pursuit to defer an actor with an uncommitted health edit\n' >&2
+    exit 1
+fi
+finish_owner
+resumed=$(db -v game_id="$game_id" -v target_id="$target_id" <<'SQL'
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT x = 300 AND health = 0 FROM doom.actors WHERE game_id = :game_id AND actor_id = :target_id;
+UPDATE doom.actors SET health = 80 WHERE game_id = :game_id AND actor_id = :target_id;
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT x = 296 AND health = 80 FROM doom.actors WHERE game_id = :game_id AND actor_id = :target_id;
+SQL
+)
+if [ "$resumed" != "$(printf '%s\n' t t)" ]; then
+    printf 'expected committed death to stop pursuit and later revival to resume it\n' >&2
+    exit 1
+fi
+
+printf 'Concurrent ticks, SQL edits, contacts, gates, shots and pursuit checks passed.\n'
