@@ -90,6 +90,8 @@ DECLARE
     overlays doom._render_span[] := ARRAY[]::doom._render_span[];
     has_mask_candidates boolean := false;
     row_patch record;
+    has_mapped_spans boolean;
+    change_count bigint;
     rgb_row bytea;
     current_row_y integer := 0;
     frame_parts bytea[] := ARRAY[]::bytea[];
@@ -431,10 +433,24 @@ BEGIN
     IF cardinality(overlays) > 0 THEN
         spans := doom._render_layer_overlays(spans, overlays);
     END IF;
-    IF has_materials AND EXISTS (
-        SELECT FROM unnest(spans) AS span WHERE (span.mapping).material_name IS NOT NULL
-    ) THEN
-        RETURN doom._sample_render_frame(camera.level_id, spans, center_y, p_span_packet);
+    IF has_materials THEN
+        SELECT bool_or((span.mapping).material_name IS NOT NULL),
+               sum(CASE WHEN (span.mapping).material_name IS NOT NULL THEN span.row_end - span.row_start ELSE 1 END)
+        INTO has_mapped_spans, change_count
+        FROM unnest(spans) AS span;
+
+        IF has_mapped_spans THEN
+            -- At higher change densities the scanline patches cost more than a direct RGB aggregate.
+            IF p_span_packet OR change_count > p_width::bigint * p_height * 45 / 100 THEN
+                RETURN doom._sample_render_frame(camera.level_id, spans, center_y, p_span_packet);
+            END IF;
+
+            -- Sample the textured pixels and reuse the solid spans as scanline changes.
+            SELECT array_agg(ROW(sample.ordinal & 65535, sample.ordinal >> 16,
+                                 (sample.ordinal >> 16) + 1, sample.rgb, NULL)::doom._render_span)
+            INTO spans
+            FROM doom._sample_render_rows(camera.level_id, spans, center_y, true) AS sample;
+        END IF;
     END IF;
 
     IF p_span_packet THEN
