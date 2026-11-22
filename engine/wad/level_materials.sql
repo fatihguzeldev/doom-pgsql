@@ -36,6 +36,7 @@ CREATE TABLE doom.level_materials (
     top_offset integer NOT NULL DEFAULT 0,
     pixels bytea NOT NULL CHECK (octet_length(pixels) = width::bigint * height),
     coverage bytea NOT NULL CHECK (octet_length(coverage) = width::bigint * height),
+    opaque boolean GENERATED ALWAYS AS (position('\x00'::bytea IN coverage) = 0) STORED,
     PRIMARY KEY (level_id, surface_kind, name)
 );
 

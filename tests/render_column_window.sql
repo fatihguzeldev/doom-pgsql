@@ -11,6 +11,13 @@ DECLARE
     full_frame bytea;
     observed bytea;
     assembled bytea;
+    blocks bytea;
+    block_offset integer;
+    block_column integer;
+    block_row integer;
+    block_length integer;
+    block_start integer;
+    written boolean[];
     column_bytes integer;
 BEGIN
     INSERT INTO doom.levels (name) VALUES ('column window fixture') RETURNING level_id INTO test_level;
@@ -49,6 +56,30 @@ BEGIN
     LOOP
         column_bytes := dimensions.height * 3;
         full_frame := doom.render_columns(test_game, dimensions.width, dimensions.height);
+        SELECT frame INTO STRICT blocks FROM doom.render_block_snapshot(test_game, dimensions.width, dimensions.height)
+        WHERE game_id = test_game AND tick_number = 0;
+        assembled := decode(repeat('00', octet_length(full_frame)), 'hex');
+        written := array_fill(false, ARRAY[dimensions.width * dimensions.height]);
+        block_offset := 0;
+        WHILE block_offset < octet_length(blocks) LOOP
+            ASSERT octet_length(blocks) - block_offset >= 6, 'block header has six bytes';
+            block_column := (get_byte(blocks, block_offset) << 8) | get_byte(blocks, block_offset + 1);
+            block_row := (get_byte(blocks, block_offset + 2) << 8) | get_byte(blocks, block_offset + 3);
+            block_length := (get_byte(blocks, block_offset + 4) << 8) | get_byte(blocks, block_offset + 5);
+            ASSERT block_column < dimensions.width AND block_length > 0
+                AND block_row + block_length <= dimensions.height, 'block fits a column';
+            block_offset := block_offset + 6;
+            ASSERT block_offset + block_length * 3 <= octet_length(blocks), 'block colors are complete';
+            block_start := block_column * dimensions.height + block_row;
+            FOR pixel IN block_start + 1 .. block_start + block_length LOOP
+                ASSERT NOT written[pixel], 'blocks do not overlap';
+                written[pixel] := true;
+            END LOOP;
+            assembled := overlay(assembled PLACING substring(blocks FROM block_offset + 1 FOR block_length * 3)
+                                 FROM block_start * 3 + 1 FOR block_length * 3);
+            block_offset := block_offset + block_length * 3;
+        END LOOP;
+        ASSERT NOT (false = ANY(written)) AND assembled = full_frame, 'blocks cover the full exact frame';
         assembled := ''::bytea;
         FOR piece IN
             SELECT * FROM (VALUES (0, dimensions.width / 2), (dimensions.width / 2, 2),

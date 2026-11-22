@@ -486,6 +486,9 @@ BEGIN
         spans := doom._render_layer_overlays(spans, overlays);
     END IF;
     IF p_column_major THEN
+        IF p_span_packet THEN
+            RETURN doom._sample_render_blocks(camera.level_id, spans, center_y);
+        END IF;
         RETURN doom._sample_render_frame(camera.level_id, spans, center_y, false, true);
     END IF;
     IF has_materials THEN
@@ -565,6 +568,12 @@ CREATE FUNCTION doom.render_columns(p_game_id bigint, p_width integer, p_height 
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
 RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, true, 0, p_width);
+
+-- Records contain uint16 column, start row, count, then count RGB888 colors, in network byte order.
+CREATE FUNCTION doom.render_blocks(p_game_id bigint, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, true, false, true, 0, p_width);
 
 -- A window of column-major RGB888 pixels from the full viewport, starting at a zero-based column.
 CREATE FUNCTION doom.render_column_window(

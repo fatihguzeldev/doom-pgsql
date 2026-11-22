@@ -7,7 +7,7 @@ import json
 import math
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from statistics import mean
+from struct import Struct
 from threading import Event
 from time import perf_counter
 
@@ -16,6 +16,7 @@ from benchmark import checked_result, connection_options, libpq
 
 TIC_RATE = 35
 FRAME_RATE = 30
+BLOCK_HEADER = Struct('!HHH')
 
 
 def input_at(tic):
@@ -42,6 +43,32 @@ def input_at(tic):
 
 def p95(values):
     return round(sorted(values)[math.ceil(0.95 * len(values)) - 1], 3) if values else None
+
+
+def unpack_blocks(payload, width, height):
+    image = bytearray(width * height * 3)
+    coverage = [0] * width
+    offset = 0
+    pixels = 0
+    while offset < len(payload):
+        if len(payload) - offset < BLOCK_HEADER.size:
+            raise RuntimeError("truncated RGB block header")
+        column, row, count = BLOCK_HEADER.unpack_from(payload, offset)
+        offset += BLOCK_HEADER.size
+        size = count * 3
+        if column >= width or row + count > height or count == 0 or offset + size > len(payload):
+            raise RuntimeError("invalid RGB block bounds")
+        rows = ((1 << count) - 1) << row
+        if coverage[column] & rows:
+            raise RuntimeError("overlapping RGB blocks")
+        coverage[column] |= rows
+        destination = (column * height + row) * 3
+        image[destination:destination + size] = payload[offset:offset + size]
+        offset += size
+        pixels += count
+    if pixels != width * height:
+        raise RuntimeError("RGB blocks did not fill frame")
+    return image
 
 
 def connect(stack, lib, options):
@@ -116,18 +143,19 @@ def measure(args, options):
             if halted.wait(max(0, due - perf_counter())) or perf_counter() >= end:
                 break
             result = call(connection, b"frame", args.game, *sizes)
-            now = perf_counter()
             requests += 1
             try:
                 if integer(result, 0) != args.game:
                     raise RuntimeError("received another game's frame")
                 tic = integer(result, 1) - initial["tic"]
                 payload = field(result, 2)
-                if len(payload) != 3 * args.width * args.height:
+                if args.blocks:
+                    payload = unpack_blocks(payload, *sizes)
+                elif len(payload) != 3 * args.width * args.height:
                     raise RuntimeError("unexpected RGB frame size")
                 if tic > (frames[-1][0] if frames else 0):
                     digest = hashlib.blake2b(payload, digest_size=8).digest()
-                    frames.append((tic, now, digest))
+                    frames.append((tic, perf_counter(), digest))
                 if frames and tic < frames[-1][0]:
                     raise RuntimeError("received an out-of-order frame")
             finally:
@@ -140,7 +168,9 @@ def measure(args, options):
     with ExitStack() as stack:
         writer, renderer = (connect(stack, lib, options) for _ in range(2))
         prepare(writer, b"tick", b"SELECT doom.tick($1, $2, $3, $4, 1, $5, $6)", 6)
-        prepare(renderer, b"frame", b"SELECT * FROM doom.render_snapshot($1, $2, $3, true)", 3)
+        frame_query = (b"SELECT * FROM doom.render_block_snapshot($1, $2, $3)" if args.blocks else
+                       b"SELECT * FROM doom.render_snapshot($1, $2, $3, true)")
+        prepare(renderer, b"frame", frame_query, 3)
         prepare(writer, b"state", b"""
             SELECT json_build_object('tic', g.tick_number, 'level', l.name, 'x', a.x, 'y', a.y,
                 'angle', a.angle, 'sector', a.sector_id, 'health', a.health,
@@ -175,6 +205,7 @@ def measure(args, options):
             input_to_frame.append((frames[frame_index][1] - due) * 1000)
     return {
         "size": sizes,
+        "encoding": "blocks" if args.blocks else "rgb",
         "applied_tics": len(arrivals),
         "elapsed_seconds": round(elapsed, 3),
         "tics_per_second": round(len(arrivals) / elapsed, 3),
@@ -199,6 +230,7 @@ def main():
     parser.add_argument("--height", type=int, default=100)
     parser.add_argument("--tics", type=int, default=2100)
     parser.add_argument("--seconds", type=float, default=60)
+    parser.add_argument("--blocks", action="store_true")
     parser.add_argument("--rtt-ms", type=float)
     parser.add_argument("--mbps", type=float)
     args = parser.parse_args()

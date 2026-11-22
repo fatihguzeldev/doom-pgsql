@@ -13,9 +13,11 @@ BEGIN ATOMIC
         CROSS JOIN LATERAL (SELECT (span.mapping).*) AS mapping
     ), materials AS MATERIALIZED (
         -- Fetch the stored planes once before any visible span expands into pixels.
-        SELECT material.surface_kind, material.name, material.width, material.height,
+        SELECT material.surface_kind, material.name, material.width, material.height, material.opaque,
+               (material.width & (material.width - 1)) = 0 AS width_power_of_two,
+               (material.height & (material.height - 1)) = 0 AS height_power_of_two,
                substring(material.pixels FROM 1) AS pixels,
-               substring(material.coverage FROM 1) AS coverage
+               CASE WHEN NOT material.opaque THEN substring(material.coverage FROM 1) END AS coverage
         FROM doom.level_materials AS material
         JOIN (SELECT DISTINCT surface_kind, material_name FROM spans WHERE material_name IS NOT NULL) AS needed
           ON needed.surface_kind = material.surface_kind AND needed.material_name = material.name
@@ -47,7 +49,7 @@ BEGIN ATOMIC
     CROSS JOIN LATERAL (
         WITH pixels AS NOT MATERIALIZED (
             SELECT raster.y,
-                   CASE WHEN get_byte(material.coverage, raster.texel) > 0
+                   CASE WHEN raster.texel IS NOT NULL AND (material.opaque OR get_byte(material.coverage, raster.texel) > 0)
                         THEN substring(palette.colors FROM 3 * get_byte(material.pixels, raster.texel) + 1 FOR 3)
                         ELSE span.rgb END AS rgb
             FROM (
@@ -55,8 +57,11 @@ BEGIN ATOMIC
                     WHEN palette.colors IS NOT NULL AND material.width IS NOT NULL
                         AND (abs(sample.u) < 9223372036854775808::double precision OR sample.u = -9223372036854775808::double precision)
                         AND (abs(sample.v) < 9223372036854775808::double precision OR sample.v = -9223372036854775808::double precision)
-                    THEN ((((sample.u::bigint % material.width) + material.width) % material.width) * material.height
-                        + ((sample.v::bigint % material.height) + material.height) % material.height)::integer
+                    THEN ((CASE WHEN material.width_power_of_two THEN sample.u::bigint & (material.width - 1)
+                                ELSE ((sample.u::bigint % material.width) + material.width) % material.width END)
+                            * material.height
+                        + CASE WHEN material.height_power_of_two THEN sample.v::bigint & (material.height - 1)
+                               ELSE ((sample.v::bigint % material.height) + material.height) % material.height END)::integer
                 END AS texel
                 FROM generate_series(span.row_start,
                     CASE WHEN (p_changes_only OR p_column_major) AND (material.width IS NULL OR palette.colors IS NULL)
@@ -98,6 +103,18 @@ RETURN (
         ''::bytea ORDER BY sampled.ordinal
     )
     FROM doom._sample_render_rows(p_level_id, p_spans, p_center_y, p_span_packet, p_column_major) AS sampled
+);
+
+CREATE FUNCTION doom._sample_render_blocks(
+    p_level_id bigint, p_spans doom._render_span[], p_center_y double precision
+)
+RETURNS bytea
+LANGUAGE sql STABLE STRICT PARALLEL SAFE
+RETURN (
+    -- Each block owns a disjoint part of a column and carries its destination.
+    SELECT string_agg(int4send(block.ordinal) || int2send((octet_length(block.rgb) / 3)::smallint)
+                      || block.rgb, ''::bytea)
+    FROM doom._sample_render_rows(p_level_id, p_spans, p_center_y, false, true) AS block
 );
 
 CREATE FUNCTION doom._render_change_count(p_level_id bigint, p_spans doom._render_span[])

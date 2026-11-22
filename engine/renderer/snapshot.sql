@@ -12,3 +12,12 @@ BEGIN
              ELSE doom.render_compact(p_game_id, p_width, p_height) END;
 END;
 $$;
+
+CREATE FUNCTION doom.render_block_snapshot(p_game_id bigint, p_width integer, p_height integer)
+RETURNS TABLE (game_id bigint, tick_number bigint, frame bytea)
+LANGUAGE sql STABLE PARALLEL SAFE
+BEGIN ATOMIC
+    SELECT p_game_id,
+        (SELECT game.tick_number FROM doom.games AS game WHERE game.game_id = p_game_id),
+        doom.render_blocks(p_game_id, p_width, p_height);
+END;
