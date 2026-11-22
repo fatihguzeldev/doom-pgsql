@@ -53,9 +53,11 @@ RETURN (
 );
 
 -- Both frame encodings consume the same composited spans from one snapshot.
+-- Estimated texture sampling cost can trigger LLVM compilation for a small frame.
 CREATE FUNCTION doom._render_frame(p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean)
 RETURNS bytea
 LANGUAGE plpgsql STABLE PARALLEL SAFE
+SET jit = off
 AS $$
 DECLARE
     camera record;
