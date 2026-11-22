@@ -9,6 +9,7 @@
 \ir wad_sprites.sql
 \ir simulation.sql
 \ir level_start.sql
+\ir level_exit.sql
 \ir movement_corner.sql
 \ir body_collision.sql
 \ir actor_collision.sql

@@ -25,10 +25,13 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     new_tick bigint;
+    game_level_id bigint;
     player doom.actors;
     controls_player boolean := p_forward <> 0 OR p_strafe <> 0 OR p_turn <> 0;
     has_motion boolean;
     has_pursuers boolean;
+    exit_sectors integer[];
+    at_exit boolean;
     actor_height double precision;
     actor_radius double precision;
     speed double precision;
@@ -44,10 +47,15 @@ BEGIN
         RAISE EXCEPTION 'invalid input or tick count' USING ERRCODE = '22023';
     END IF;
 
-    UPDATE doom.games SET tick_number = tick_number + p_ticks
-    WHERE game_id = p_game_id RETURNING tick_number INTO new_tick;
+    UPDATE doom.games AS game SET tick_number = game.tick_number + p_ticks
+    WHERE game.game_id = p_game_id AND game.finished_at_tick IS NULL
+    RETURNING game.tick_number, game.level_id INTO new_tick, game_level_id;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'game % does not exist', p_game_id USING ERRCODE = '22023';
+        SELECT game.tick_number INTO new_tick FROM doom.games AS game WHERE game.game_id = p_game_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'game % does not exist', p_game_id USING ERRCODE = '22023';
+        END IF;
+        RETURN new_tick;
     END IF;
 
     -- Read activity after taking the game lock so this sees its predecessor's committed state.
@@ -61,13 +69,15 @@ BEGIN
                    ORDER BY actor.collision_x_bucket
                    LIMIT 1
                ) AS living
-           )
-    INTO has_motion, has_pursuers;
-    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion AND NOT has_pursuers THEN
+           ),
+           (SELECT array_agg(destination.sector_id) FROM doom.level_exits AS destination
+            WHERE destination.level_id = game_level_id)
+    INTO has_motion, has_pursuers, exit_sectors;
+    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion AND NOT has_pursuers AND exit_sectors IS NULL THEN
         RETURN new_tick;
     END IF;
 
-    IF controls_player OR p_use OR p_fire OR has_pursuers THEN
+    IF controls_player OR p_use OR p_fire OR has_pursuers OR exit_sectors IS NOT NULL THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
@@ -105,8 +115,9 @@ BEGIN
                                       speed * (p_forward * camera_sin + p_strafe * camera_cos),
                                       actor_height, actor_radius);
         END IF;
-        -- Pursuers see this tic's pose. Otherwise the batch writes it once.
-        IF controls_player AND (has_pursuers OR tic = p_ticks) THEN
+        at_exit := exit_sectors IS NOT NULL AND player.health > 0 AND player.sector_id = ANY (exit_sectors);
+        -- Write the pose before other actors use it or the batch returns.
+        IF controls_player AND (has_pursuers OR at_exit OR tic = p_ticks) THEN
             UPDATE doom.actors AS actor
             SET x = player.x, y = player.y, z = player.z, angle = player.angle, sector_id = player.sector_id
             WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
@@ -120,6 +131,11 @@ BEGIN
                 has_pursuers := false;
                 speed := NULL;
             END IF;
+        END IF;
+        IF at_exit AND player.health > 0 THEN
+            new_tick := new_tick - p_ticks + tic;
+            UPDATE doom.games SET tick_number = new_tick, finished_at_tick = new_tick WHERE game_id = p_game_id;
+            RETURN new_tick;
         END IF;
         EXIT WHEN NOT controls_player AND NOT has_motion AND NOT has_pursuers;
     END LOOP;

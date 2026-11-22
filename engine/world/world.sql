@@ -15,6 +15,13 @@ CREATE TABLE doom.sectors (
     PRIMARY KEY (level_id, sector_id)
 );
 
+CREATE TABLE doom.level_exits (
+    level_id bigint NOT NULL,
+    sector_id integer NOT NULL,
+    PRIMARY KEY (level_id, sector_id),
+    FOREIGN KEY (level_id, sector_id) REFERENCES doom.sectors ON DELETE CASCADE
+);
+
 CREATE TABLE doom.lines (
     level_id bigint NOT NULL,
     line_id integer NOT NULL CHECK (line_id >= 0),
@@ -39,6 +46,7 @@ CREATE TABLE doom.games (
     game_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     level_id bigint NOT NULL REFERENCES doom.levels,
     tick_number bigint NOT NULL DEFAULT 0 CHECK (tick_number >= 0),
+    finished_at_tick bigint CHECK (finished_at_tick IS NULL OR (finished_at_tick > 0 AND finished_at_tick = tick_number)),
     UNIQUE (game_id, level_id)
 );
 
