@@ -15,6 +15,7 @@ CREATE SCHEMA doom;
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql
 \ir engine/renderer/materials.sql
+\ir engine/renderer/masks.sql
 \ir engine/renderer/render.sql
 \ir engine/step.sql
 COMMIT;

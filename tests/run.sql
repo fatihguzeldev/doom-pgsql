@@ -11,4 +11,5 @@
 \ir movement_corner.sql
 \ir renderer.sql
 \ir render_materials.sql
+\ir render_masks.sql
 \ir step.sql

@@ -18,29 +18,29 @@ RETURN decode(lpad(to_hex(
     | (((p_color & 255) * p_light + 127) / 255)
 ), 6, '0'), 'hex');
 
--- Actor spans arrive front to back. Subtract nearer spans before unpacking the
--- packed RGB rows, so neither overdraw nor sorting scales with actor pixel count.
-CREATE FUNCTION doom._render_layer_actors(p_world doom._render_span[], p_actors doom._render_span[])
+-- Opaque overlay spans arrive front to back. Subtract nearer spans before
+-- sampling textures or unpacking the final RGB rows.
+CREATE FUNCTION doom._render_layer_overlays(p_world doom._render_span[], p_overlays doom._render_span[])
 RETURNS doom._render_span[]
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 RETURN (
-    WITH actor_rows AS MATERIALIZED (
-        SELECT column_x, rgb, depth_order, int4range(row_start, row_end) AS rows
-        FROM unnest(p_actors) WITH ORDINALITY AS actor(column_x, row_start, row_end, rgb, mapping, depth_order)
+    WITH overlay_rows AS MATERIALIZED (
+        SELECT column_x, rgb, mapping, depth_order, int4range(row_start, row_end) AS rows
+        FROM unnest(p_overlays) WITH ORDINALITY AS layer(column_x, row_start, row_end, rgb, mapping, depth_order)
     ), covered_rows AS (
         SELECT column_x, range_agg(rows) AS mask
-        FROM actor_rows
+        FROM overlay_rows
         GROUP BY column_x
-    ), actor_masks AS (
-        SELECT column_x, rows, rgb,
+    ), overlay_masks AS (
+        SELECT column_x, rows, rgb, mapping,
                range_agg(rows) OVER (PARTITION BY column_x ORDER BY depth_order
                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS mask
-        FROM actor_rows
+        FROM overlay_rows
     ), pieces AS (
-        SELECT actor.column_x, visible.rows, actor.rgb, NULL::doom._render_mapping AS mapping
-        FROM actor_masks AS actor
-        CROSS JOIN LATERAL unnest(int4multirange(actor.rows)
-            - coalesce(actor.mask, '{}'::int4multirange)) AS visible(rows)
+        SELECT layer.column_x, visible.rows, layer.rgb, layer.mapping
+        FROM overlay_masks AS layer
+        CROSS JOIN LATERAL unnest(int4multirange(layer.rows)
+            - coalesce(layer.mask, '{}'::int4multirange)) AS visible(rows)
         UNION ALL
         SELECT base.column_x, visible.rows, base.rgb, base.mapping
         FROM unnest(p_world) AS base
@@ -87,7 +87,8 @@ DECLARE
     scale double precision;
     hit record;
     spans doom._render_span[] := ARRAY[]::doom._render_span[];
-    actor_spans doom._render_span[] := ARRAY[]::doom._render_span[];
+    overlays doom._render_span[] := ARRAY[]::doom._render_span[];
+    has_mask_candidates boolean := false;
     row_patch record;
     rgb_row bytea;
     current_row_y integer := 0;
@@ -151,7 +152,7 @@ BEGIN
                    (line.x2 - camera.x) * forward_y - (line.y2 - camera.y) * forward_x AS b_right
             FROM doom.lines AS line
             WHERE line.level_id = camera.level_id
-              AND line.front_sector_id IS DISTINCT FROM line.back_sector_id
+              AND (has_materials OR line.front_sector_id IS DISTINCT FROM line.back_sector_id)
         ), projected_lines AS MATERIALIZED (
             SELECT line.line_id, line.a_depth, line.b_depth, line.a_right,
                    near.sector_id AS near_id, far.shape AS far_surface,
@@ -182,6 +183,7 @@ BEGIN
             LEFT JOIN doom.line_surfaces AS face ON has_materials AND face.level_id = camera.level_id
                 AND face.line_id = line.line_id AND face.is_back = (geometry.numerator < 0)
             WHERE greatest(line.a_depth, line.b_depth) >= near_depth AND geometry.numerator <> 0
+              AND (line.front_sector_id IS DISTINCT FROM line.back_sector_id OR face.middle_material IS NOT NULL)
         ), sampled_lines AS MATERIALIZED (
             -- Use a left-open, right-closed screen interval. At a shared vertex
             -- this is equivalent to moving the ray an infinitesimal step left.
@@ -304,7 +306,7 @@ BEGIN
                 wall_bottom := greatest(clip_top, least(clip_bottom, ceil(center_y
                     + (eye_z - greatest(hit.low_z, current_sector.floor_height)) * scale - 0.5)))::integer;
                 IF wall_top < wall_bottom THEN
-                    actor_spans := array_append(actor_spans,
+                    overlays := array_append(overlays,
                         ROW(column_x, wall_top, wall_bottom, hit.rgb, NULL)::doom._render_span);
                 END IF;
                 CONTINUE;
@@ -382,13 +384,22 @@ BEGIN
                         hit.wall_u, wall_v + opening_floor, 0, wall_dv, false)::doom._render_mapping
                 END)::doom._render_span);
         END IF;
+        IF has_materials AND wall_surface.middle_material IS NOT NULL AND opening_top < opening_bottom THEN
+            overlays := array_append(overlays, ROW(column_x, opening_top, opening_bottom, hit.rgb,
+                ROW('wall', wall_surface.middle_material, current_sector.light_level,
+                    hit.wall_u, wall_v + opening_ceiling, 0, wall_dv, false)::doom._render_mapping)::doom._render_span);
+            has_mask_candidates := true;
+        END IF;
         clip_top := opening_top;
         clip_bottom := opening_bottom;
         current_sector := far_sector;
     END LOOP;
 
-    IF cardinality(actor_spans) > 0 THEN
-        spans := doom._render_layer_actors(spans, actor_spans);
+    IF has_mask_candidates THEN
+        overlays := doom._clip_masked_render_spans(camera.level_id, overlays);
+    END IF;
+    IF cardinality(overlays) > 0 THEN
+        spans := doom._render_layer_overlays(spans, overlays);
     END IF;
     IF has_materials AND EXISTS (
         SELECT FROM unnest(spans) AS span WHERE (span.mapping).material_name IS NOT NULL
