@@ -13,8 +13,8 @@ BEGIN
     INSERT INTO doom.levels (name) VALUES ('spatial compilation') RETURNING level_id INTO level;
     INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height)
     VALUES (level, 0, 0, 128), (level, 1, 0, 128);
-    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id)
-    VALUES (level, 0, -64, -64, 128, -64, 0), (level, 1, 128, -64, 128, 192, 1);
+    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id, back_sector_id)
+    VALUES (level, 0, -64, -64, 128, -64, 0, 1), (level, 1, 128, -64, 128, 192, 1, NULL);
 
     PERFORM doom._compile_wad_spatial(level, vertices_x, vertices_y, segs, leaves,
         overlay(nodes PLACING '\x0080'::bytea FROM 27));
@@ -28,6 +28,14 @@ BEGIN
         IS DISTINCT FROM ARRAY[-1, -2, -64, 128, -64, 192]
     THEN
         RAISE EXCEPTION 'compiled BSP bounds must enclose source lines, got %', root;
+    END IF;
+
+    IF (SELECT line_ids FROM doom.wad_sector_lines WHERE level_id = level AND sector_id = 0)
+            IS DISTINCT FROM ARRAY[0]
+        OR (SELECT line_ids FROM doom.wad_sector_lines WHERE level_id = level AND sector_id = 1)
+            IS DISTINCT FROM ARRAY[0, 1]
+    THEN
+        RAISE EXCEPTION 'compiled sector lookup must include front and back line memberships';
     END IF;
 
     IF doom._wad_line_candidates(level, -1, -64, 128, 0) IS DISTINCT FROM ARRAY[0, 1]
@@ -45,8 +53,9 @@ BEGIN
     UPDATE doom.lines SET x2 = 129 WHERE level_id = level AND line_id = 0;
     IF doom._wad_line_candidates(level, 128, 0, 128, 0) IS NOT NULL
         OR EXISTS (SELECT FROM doom.wad_line_blocks WHERE level_id = level)
+        OR EXISTS (SELECT FROM doom.wad_sector_lines WHERE level_id = level)
     THEN
-        RAISE EXCEPTION 'a geometry edit must atomically invalidate BSP and collision candidates';
+        RAISE EXCEPTION 'a geometry edit must atomically invalidate compiled sector and collision candidates';
     END IF;
 END;
 $$;

@@ -35,6 +35,13 @@ CREATE TABLE doom.wad_line_blocks (
     PRIMARY KEY (level_id, block_x, block_y)
 );
 
+CREATE TABLE doom.wad_sector_lines (
+    level_id bigint NOT NULL REFERENCES doom.wad_bsp ON DELETE CASCADE,
+    sector_id integer NOT NULL,
+    line_ids integer[] NOT NULL,
+    PRIMARY KEY (level_id, sector_id)
+);
+
 CREATE FUNCTION doom._invalidate_wad_spatial()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -208,6 +215,13 @@ BEGIN
 
     INSERT INTO doom.wad_bsp (level_id, nodes, leaves, has_line_grid)
     VALUES (p_level_id, nodes, leaves, has_grid);
+    INSERT INTO doom.wad_sector_lines (level_id, sector_id, line_ids)
+    SELECT p_level_id, side.sector_id, array_agg(DISTINCT line.line_id ORDER BY line.line_id)
+    FROM doom.lines AS line
+    CROSS JOIN LATERAL (VALUES (line.front_sector_id), (line.back_sector_id)) AS side(sector_id)
+    WHERE line.level_id = p_level_id AND side.sector_id IS NOT NULL
+    GROUP BY side.sector_id;
+
     IF has_grid THEN
         INSERT INTO doom.wad_line_blocks (level_id, block_x, block_y, line_ids)
         SELECT p_level_id, x.block, y.block, array_agg(line.line_id ORDER BY line.line_id)
