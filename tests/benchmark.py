@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from statistics import median
+from statistics import mean, median
 from time import perf_counter
 
 
@@ -60,8 +60,11 @@ def measure(args, connection_options=b""):
         "noop": (b"SELECT 1", lambda _: [], 4),
         "tick": (b"SELECT doom.tick($1, $2, 0, 0, $3)", lambda axis: [game, axis, ticks], 8),
         "render": (b"SELECT doom.render($1, $2, $3)", lambda _: [game, width, height], args.width * args.height * 3),
+        "render_spans": (b"SELECT doom.render_spans($1, $2, $3)", lambda _: [game, width, height], None),
         "step": (b"SELECT doom.step($1, $2, $3, $4, 0, 0, $5)",
                  lambda axis: [game, width, height, axis, ticks], args.width * args.height * 3),
+        "step_spans": (b"SELECT doom.step_spans($1, $2, $3, $4, 0, 0, $5)",
+                       lambda axis: [game, width, height, axis, ticks], None),
     }
     operations = ("tick", "render") if args.mode == "split" else (args.mode,)
     connection = lib.PQconnectdb(connection_options)
@@ -77,9 +80,11 @@ def measure(args, connection_options=b""):
             lib.PQclear(checked_result(lib, connection, result, 1))
 
         samples = []
+        payload_sizes = []
         elapsed = 0.0
         for i in range(args.warmup + args.samples):
             axis = b"0.125" if i % 2 == 0 else b"-0.125"
+            sample_bytes = 0
             started = perf_counter()
             for name in operations:
                 _, parameters, size = queries[name]
@@ -88,21 +93,29 @@ def measure(args, connection_options=b""):
                 result = lib.PQexecPrepared(connection, name.encode(), len(values), params, None, None, 1)
                 result = checked_result(lib, connection, result, 2)
                 try:
-                    if lib.PQntuples(result) != 1 or lib.PQgetlength(result, 0, 0) != size:
+                    if lib.PQntuples(result) != 1:
+                        raise RuntimeError(f"{name} did not return one result row")
+                    result_bytes = lib.PQgetlength(result, 0, 0)
+                    if size is None and (result_bytes == 0 or result_bytes % 7):
+                        raise RuntimeError(f"{name} did not return a nonempty sequence of 7-byte RGB changes")
+                    if size is not None and result_bytes != size:
                         raise RuntimeError(f"{name} did not return the expected {size}-byte result")
+                    sample_bytes += result_bytes
                 finally:
                     lib.PQclear(result)
             duration = perf_counter() - started
             if i >= args.warmup:
                 elapsed += duration
                 samples.append(duration * 1000)
+                payload_sizes.append(sample_bytes)
 
         return {
             "mode": args.mode,
             "samples": args.samples,
             "added_rtt_ms": args.rtt_ms,
+            "bandwidth_mbps": args.mbps,
             "round_trips_per_sample": len(operations),
-            "payload_bytes": sum(queries[name][2] for name in operations),
+            "payload_bytes": mean(payload_sizes),
             "median_ms": round(median(samples), 3),
             "p95_ms": round(sorted(samples)[math.ceil(0.95 * len(samples)) - 1], 3),
             "samples_per_second": round(len(samples) / elapsed, 3),
@@ -113,7 +126,7 @@ def measure(args, connection_options=b""):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("noop", "tick", "render", "step", "split"))
+    parser.add_argument("mode", choices=("noop", "tick", "render", "render_spans", "step", "step_spans", "split"))
     parser.add_argument("--game", type=int, default=1)
     parser.add_argument("--width", type=int, default=320)
     parser.add_argument("--height", type=int, default=200)
@@ -121,9 +134,15 @@ def main():
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--rtt-ms", type=float, help="add this TCP round-trip delay using the local proxy")
+    parser.add_argument("--mbps", type=float, help="limit TCP throughput in each direction using the local proxy")
     args = parser.parse_args()
     if args.warmup < 0 or min(args.samples, args.width, args.height, args.ticks) < 1:
         parser.error("sample count, width, height and tick count must be positive")
+    if args.mbps is not None:
+        if args.mbps <= 0 or not math.isfinite(args.mbps):
+            parser.error("bandwidth must be finite and positive")
+        if args.rtt_ms is None:
+            args.rtt_ms = 0.0
     if args.rtt_ms is None:
         print(json.dumps(measure(args)))
         return
@@ -133,6 +152,8 @@ def main():
     command = [sys.executable, "-B", str(Path(__file__).with_name("latency_proxy.py")),
                "--target-host", os.environ.get("PGHOSTADDR") or os.environ.get("PGHOST", "127.0.0.1"),
                "--target-port", os.environ.get("PGPORT", "5432"), "--rtt-ms", str(args.rtt_ms)]
+    if args.mbps is not None:
+        command.extend(("--mbps", str(args.mbps)))
     with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as proxy:
         try:
             port = proxy.stdout.readline().strip()
