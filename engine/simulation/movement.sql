@@ -29,6 +29,8 @@ LANGUAGE plpgsql STABLE
 AS $$
 DECLARE
     clearance CONSTANT double precision := 0.00001;
+    boundary_slop CONSTANT double precision := 0.00000001;
+    start_slop double precision := boundary_slop / greatest(1.0, abs(p_dx), abs(p_dy));
     hit record;
     floor_at_destination integer;
     traversed double precision := '-Infinity';
@@ -73,7 +75,7 @@ BEGIN
     END IF;
 
     LOOP
-        SELECT line.line_id, line.blocking, position.t,
+        SELECT line.line_id, line.blocking, greatest(0, position.t) AS t,
                CASE WHEN line.front_sector_id = p_actor.sector_id THEN line.back_sector_id
                     ELSE line.front_sector_id END AS neighbor
         INTO hit
@@ -93,10 +95,10 @@ BEGIN
           AND ((line.front_sector_id = p_actor.sector_id AND ray.den < 0)
                OR (line.back_sector_id = p_actor.sector_id AND ray.den > 0))
           AND position.u BETWEEN 0 AND 1
-          AND position.t BETWEEN 0 AND 1
-          AND position.t >= traversed
+          AND position.t BETWEEN -start_slop AND 1
+          AND greatest(0, position.t) >= traversed
           AND line.line_id <> ALL (crossed_lines)
-        ORDER BY position.t, (line.blocking OR line.back_sector_id IS NULL) DESC, line.line_id
+        ORDER BY t, (line.blocking OR line.back_sector_id IS NULL) DESC, line.line_id
         LIMIT 1;
 
         segment_start := greatest(0, traversed);
@@ -151,11 +153,26 @@ BEGIN
                     AND front_sector_id <> sector.sector_id
                 OFFSET 0
             ) AS line
-            WHERE CASE WHEN line.blocking OR line.back_sector_id IS NULL THEN true
-                       ELSE NOT EXISTS (SELECT FROM doom._portal_floor(p_actor.game_id, p_actor.level_id,
+            CROSS JOIN LATERAL (
+                SELECT line.x2::double precision - line.x1 AS dx,
+                       line.y2::double precision - line.y1 AS dy
+            ) AS edge
+            -- An accepted drop can make its own portal impassable in reverse. The body
+            -- is still allowed to move away from that edge, including from a rounded boundary.
+            WHERE line.line_id <> ALL (crossed_lines)
+              AND CASE WHEN line.blocking OR line.back_sector_id IS NULL THEN true
+                       WHEN EXISTS (SELECT FROM doom._portal_floor(p_actor.game_id, p_actor.level_id,
                            sector.sector_id, CASE WHEN line.front_sector_id = sector.sector_id
                                                  THEN line.back_sector_id ELSE line.front_sector_id END,
-                           p_actor.z, p_height)) END;
+                           p_actor.z, p_height)) THEN false
+                       ELSE NOT (sector.sector_id = p_actor.sector_id
+                         AND abs((start_x - line.x1) * edge.dy - (start_y - line.y1) * edge.dx)
+                             <= boundary_slop * greatest(abs(edge.dx), abs(edge.dy))
+                         AND (start_x - line.x1) * edge.dx + (start_y - line.y1) * edge.dy
+                             BETWEEN 0 AND edge.dx * edge.dx + edge.dy * edge.dy
+                         AND CASE WHEN line.front_sector_id = p_actor.sector_id
+                                  THEN p_dx * edge.dy - p_dy * edge.dx > 0
+                                  ELSE p_dx * edge.dy - p_dy * edge.dx < 0 END) END;
 
             -- Portal crossings update the floor and sector; x and y still anchor the whole move.
             actor_on_segment := p_actor;

@@ -116,3 +116,40 @@ END;
 $$;
 
 ROLLBACK;
+
+BEGIN;
+SET LOCAL plpgsql.check_asserts = on;
+
+DO $$
+DECLARE
+    test_level bigint;
+    test_game bigint;
+    player doom.actors;
+    moved doom.actors;
+BEGIN
+    INSERT INTO doom.levels (name) VALUES ('slanted drop') RETURNING level_id INTO test_level;
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height)
+    VALUES (test_level, 0, 48, 128), (test_level, 1, -64, 128);
+    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id, back_sector_id)
+    VALUES (test_level, 0, 10, 1520, 90, 1309, 0, 1);
+    test_game := doom.start_game(test_level, 0, 41.02, 1434.78475);
+    SELECT * INTO STRICT player FROM doom.actors WHERE game_id = test_game AND kind = 'player';
+
+    moved := doom.move_actor(player, 0, 8, 56, 16);
+    ASSERT moved.y = player.y + 8 AND moved.sector_id = 1 AND moved.z = -64,
+        'a slanted drop does not block the sweep after the sector switches';
+
+    -- The previous move can end with the center rounded to the other side of the boundary.
+    player.y := 1438.18475;
+    player.sector_id := 1;
+    player.z := -64;
+    moved := doom.move_actor(player, 0, 8, 56, 16);
+    ASSERT moved.y = player.y + 8 AND moved.sector_id = 1,
+        'movement away from the high side remains free at the exact drop edge';
+    moved := doom.move_actor(player, 0, -8, 56, 16);
+    ASSERT moved.y = player.y AND moved.sector_id = 1,
+        'reversing into the high side cannot cross the edge';
+END;
+$$;
+
+ROLLBACK;
