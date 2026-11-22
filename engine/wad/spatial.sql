@@ -7,6 +7,11 @@ DECLARE
     subsector_count integer := octet_length(p_subsectors) / 4;
     node_count integer := octet_length(p_nodes) / 28;
     inserted integer;
+    bounds integer[];
+    parent_node record;
+    right_at integer;
+    left_at integer;
+    node_at integer;
 BEGIN
     IF octet_length(p_segs) % 12 <> 0 OR octet_length(p_subsectors) % 4 <> 0
         OR octet_length(p_nodes) % 28 <> 0 OR seg_count NOT BETWEEN 1 AND 65536
@@ -102,6 +107,45 @@ BEGIN
         GROUP BY child.id HAVING count(*) > 1
     ) THEN
         RAISE EXCEPTION 'invalid WAD BSP tree' USING ERRCODE = '22023';
+    END IF;
+
+    -- Node IDs are topologically ordered. Derive bounds from actual segs so an
+    -- undersized NODES box cannot hide geometry during visibility traversal.
+    IF node_count > 0 THEN
+        SELECT array_agg(field.value ORDER BY leaf.subsector_id, field.ordinal)
+            || array_fill(0, ARRAY[4 * node_count])
+        INTO bounds
+        FROM (
+            SELECT sub.subsector_id, min(least(seg.x1, seg.x2)) AS x_min,
+                max(greatest(seg.x1, seg.x2)) AS x_max, min(least(seg.y1, seg.y2)) AS y_min,
+                max(greatest(seg.y1, seg.y2)) AS y_max
+            FROM doom.wad_subsectors AS sub
+            JOIN doom.wad_segs AS seg ON seg.level_id = sub.level_id
+                AND seg.seg_id >= sub.first_seg_id AND seg.seg_id < sub.first_seg_id + sub.seg_count
+            WHERE sub.level_id = p_level_id
+            GROUP BY sub.subsector_id
+        ) AS leaf
+        CROSS JOIN LATERAL unnest(ARRAY[leaf.x_min, leaf.x_max, leaf.y_min, leaf.y_max])
+            WITH ORDINALITY AS field(value, ordinal);
+
+        FOR parent_node IN SELECT node_id, right_child, left_child FROM doom.wad_bsp_nodes
+            WHERE level_id = p_level_id ORDER BY node_id
+        LOOP
+            right_at := 4 * CASE WHEN parent_node.right_child < 0 THEN ~parent_node.right_child
+                ELSE subsector_count + parent_node.right_child END + 1;
+            left_at := 4 * CASE WHEN parent_node.left_child < 0 THEN ~parent_node.left_child
+                ELSE subsector_count + parent_node.left_child END + 1;
+            node_at := 4 * (subsector_count + parent_node.node_id) + 1;
+            UPDATE doom.wad_bsp_nodes SET right_left = bounds[right_at], right_right = bounds[right_at + 1],
+                right_bottom = bounds[right_at + 2], right_top = bounds[right_at + 3],
+                left_left = bounds[left_at], left_right = bounds[left_at + 1],
+                left_bottom = bounds[left_at + 2], left_top = bounds[left_at + 3]
+            WHERE level_id = p_level_id AND node_id = parent_node.node_id;
+            bounds[node_at] := least(bounds[right_at], bounds[left_at]);
+            bounds[node_at + 1] := greatest(bounds[right_at + 1], bounds[left_at + 1]);
+            bounds[node_at + 2] := least(bounds[right_at + 2], bounds[left_at + 2]);
+            bounds[node_at + 3] := greatest(bounds[right_at + 3], bounds[left_at + 3]);
+        END LOOP;
     END IF;
 
     INSERT INTO doom.wad_sector_lookup (level_id, nodes, leaf_sectors)

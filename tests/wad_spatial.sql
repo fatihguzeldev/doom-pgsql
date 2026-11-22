@@ -29,7 +29,12 @@ BEGIN
         RAISE EXCEPTION 'an invalid BSP left partial segs';
     END IF;
 
-    PERFORM doom._import_wad_bsp(level, segs, leaves, nodes);
+    PERFORM doom._import_wad_bsp(level, segs, leaves, overlay(nodes PLACING decode(repeat('00', 16), 'hex') FROM 9));
+    IF NOT EXISTS (SELECT FROM doom.wad_bsp_nodes WHERE level_id = level AND node_id = 0
+        AND (right_left, right_right, right_bottom, right_top) = (-64, 128, -64, -64)
+        AND (left_left, left_right, left_bottom, left_top) = (128, 128, -64, 192)) THEN
+        RAISE EXCEPTION 'a bad input box hid segment endpoints from BSP culling';
+    END IF;
     SELECT * INTO STRICT seg FROM doom.wad_segs WHERE level_id = level AND seg_id = 1;
     IF ARRAY[seg.x1, seg.y1, seg.x2, seg.y2, seg.side_id, seg.front_sector_id, seg.back_sector_id, seg."offset"]
         IS DISTINCT FROM ARRAY[128, -64, 128, 192, 8, 20, 10, 8]
