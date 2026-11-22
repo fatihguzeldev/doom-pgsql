@@ -189,4 +189,52 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+    test_level bigint;
+    test_game bigint;
+    frame bytea;
+BEGIN
+    INSERT INTO doom.levels (name) VALUES ('Four rooms at a shared vertex')
+    RETURNING level_id INTO test_level;
+
+    INSERT INTO doom.sectors
+        (level_id, sector_id, floor_height, ceiling_height, light_level, floor_color, ceiling_color)
+    SELECT test_level, sector_id, 0, 128, 255, x'004400'::integer, x'000044'::integer
+    FROM generate_series(0, 3) AS sector_id;
+
+    -- Rotate the four-room layout so the middle ray touches their shared vertex.
+    INSERT INTO doom.lines
+        (level_id, line_id, x1, y1, x2, y2, front_sector_id, back_sector_id, wall_color)
+    SELECT test_level, line_id, x1 + y1, y1 - x1, x2 + y2, y2 - x2, near_id, far_id, color
+    FROM (VALUES
+        (10,   0,   0,   0,  64, 0, NULL, x'330000'::integer),
+        (11,  64,  64,  64,   0, 0,    1, 0),
+        (12,  64,   0,   0,   0, 0, NULL, 0),
+        (13,   0,  64,  64,  64, 0,    2, 0),
+        ( 1,  64,  64, 128,  64, 1,    3, 0),
+        (14, 128,  64, 128,   0, 1, NULL, 0),
+        (15, 128,   0,  64,   0, 1, NULL, 0),
+        (16,   0,  64,   0, 128, 2, NULL, 0),
+        (17,   0, 128,  64, 128, 2, NULL, 0),
+        ( 2,  64, 128,  64,  64, 2,    3, 0),
+        (18,  64, 128, 128, 128, 3, NULL, x'CC2020'::integer),
+        (19, 128, 128, 128,  64, 3, NULL, x'CC2020'::integer)
+    ) AS wall(line_id, x1, y1, x2, y2, near_id, far_id, color);
+
+    test_game := doom.start_game(test_level, 0, 64, 0);
+    frame := doom.render(test_game, 7, 9);
+
+    IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('CC2020', 'hex') THEN
+        RAISE EXCEPTION 'A ray through a shared vertex must reach the diagonally adjacent room';
+    END IF;
+
+    UPDATE doom.lines SET line_id = line_id + 30 WHERE level_id = test_level AND line_id IN (1, 2);
+
+    IF frame IS DISTINCT FROM doom.render(test_game, 7, 9) THEN
+        RAISE EXCEPTION 'Renumbering lines must not change a ray traveling through a shared vertex';
+    END IF;
+END;
+$$;
+
 ROLLBACK;

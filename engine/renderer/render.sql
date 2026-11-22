@@ -71,6 +71,7 @@ DECLARE
     focal double precision;
     center_y double precision;
     near_depth CONSTANT double precision := 0.001;
+    pixel_epsilon CONSTANT double precision := 0.000000001;
     column_x integer := -1;
     clip_top integer;
     clip_bottom integer;
@@ -143,7 +144,7 @@ BEGIN
             WHERE line.level_id = camera.level_id
               AND line.front_sector_id IS DISTINCT FROM line.back_sector_id
         ), projected_lines AS MATERIALIZED (
-            SELECT line.line_id, line.a_depth, line.a_right,
+            SELECT line.line_id, line.a_depth, line.b_depth,
                    near.sector_id AS near_id, far.shape AS far_surface,
                    doom._render_rgb(line.wall_color, near.light_level) AS rgb,
                    geometry.numerator, line.b_depth - line.a_depth AS delta_depth,
@@ -165,25 +166,44 @@ BEGIN
             LEFT JOIN surfaces AS far ON far.sector_id =
                 CASE WHEN geometry.numerator > 0 THEN line.back_sector_id ELSE line.front_sector_id END
             WHERE greatest(line.a_depth, line.b_depth) >= near_depth AND geometry.numerator <> 0
-        ), intersections AS (
-            -- Only scan pixel centers between the near-clipped endpoints. A ray is
-            -- (1, slope) in camera space, so its intersection t is already camera depth.
-            SELECT pixel.x AS column_x, sample.depth, line.line_id, line.rgb, line.near_id, line.far_surface
+        ), sampled_lines AS MATERIALIZED (
+            -- Use a left-open, right-closed screen interval. At a shared vertex
+            -- this is equivalent to moving the ray an infinitesimal step left.
+            SELECT line.line_id, line.near_id, line.far_surface, line.rgb,
+                   line.numerator, line.delta_depth, line.delta_right,
+                   bounds.first_col, bounds.last_col,
+                   CASE WHEN abs(edge.right_x - bounds.last_col) <= pixel_epsilon
+                        THEN bounds.last_col END AS vertex_col,
+                   vertex.depth AS vertex_depth,
+                   -line.delta_depth * vertex.depth / line.numerator AS vertex_slope
             FROM projected_lines AS line
-            CROSS JOIN LATERAL generate_series(
-                least(p_width, greatest(0, ceil(focal * (1 + least(line.a_slope, line.b_slope)) - 0.500000001)))::integer,
-                greatest(-1, least(p_width - 1, floor(focal * (1 + greatest(line.a_slope, line.b_slope)) - 0.499999999)))::integer
-            ) AS pixel(x)
+            CROSS JOIN LATERAL (SELECT
+                focal * (1 + least(line.a_slope, line.b_slope)) - 0.5 AS left_x,
+                focal * (1 + greatest(line.a_slope, line.b_slope)) - 0.5 AS right_x
+            ) AS edge
+            CROSS JOIN LATERAL (SELECT
+                least(p_width, greatest(0, floor(edge.left_x + pixel_epsilon) + 1))::integer AS first_col,
+                greatest(-1, least(p_width - 1, floor(edge.right_x + pixel_epsilon)))::integer AS last_col
+            ) AS bounds
+            CROSS JOIN LATERAL (SELECT greatest(near_depth,
+                CASE WHEN line.numerator > 0 THEN line.b_depth ELSE line.a_depth END) AS depth
+            ) AS vertex
+            WHERE bounds.first_col <= bounds.last_col
+        ), intersections AS (
+            -- A ray is (1, slope) in camera space, so its intersection distance
+            -- is already camera depth. Use the leftward depth derivative to sort
+            -- simultaneous crossings at the same projected vertex.
+            SELECT pixel.x AS column_x, line.line_id, line.rgb, line.near_id, line.far_surface,
+                   CASE WHEN pixel.x = line.vertex_col THEN line.vertex_depth ELSE sample.depth END AS depth,
+                   CASE WHEN pixel.x = line.vertex_col THEN line.vertex_slope ELSE 0 END AS depth_slope
+            FROM sampled_lines AS line
+            CROSS JOIN LATERAL generate_series(line.first_col, line.last_col) AS pixel(x)
             CROSS JOIN LATERAL (SELECT (pixel.x + 0.5 - focal) / focal AS slope) AS ray_angle
             CROSS JOIN LATERAL (SELECT
                 line.delta_right - ray_angle.slope * line.delta_depth AS determinant
             ) AS ray
-            CROSS JOIN LATERAL (SELECT
-                line.numerator / nullif(ray.determinant, 0) AS depth,
-                (line.a_depth * ray_angle.slope - line.a_right) / nullif(ray.determinant, 0) AS along_line
-            ) AS sample
+            CROSS JOIN LATERAL (SELECT line.numerator / nullif(ray.determinant, 0) AS depth) AS sample
             WHERE sample.depth >= near_depth
-              AND sample.along_line BETWEEN -0.000000001 AND 1.000000001
         ), view_actors AS (
             SELECT actor.actor_id, actor.sector_id, actor.z, kind.radius, kind.color,
                    (actor.x - camera.x) * forward_x + (actor.y - camera.y) * forward_y AS depth,
@@ -215,16 +235,17 @@ BEGIN
             CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - sample.across * sample.across)) AS extent) AS ellipse
         )
         SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id, i.far_surface, i.rgb,
-               false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z
+               false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z,
+               i.depth_slope
         FROM intersections AS i
         UNION ALL
         SELECT sprite.column_x, sprite.depth, sprite.actor_id, sprite.sector_id,
-               NULL, sprite.rgb, true, sprite.low_z, sprite.high_z
+               NULL, sprite.rgb, true, sprite.low_z, sprite.high_z, 0
         FROM actor_slices AS sprite
         UNION ALL
-        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL
+        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 0
         FROM generate_series(0, p_width - 1) AS pixel(x)
-        ORDER BY column_x, depth NULLS LAST, is_actor, hit_id
+        ORDER BY column_x, depth NULLS LAST, is_actor, depth_slope, hit_id
     LOOP
         IF hit.column_x <> column_x THEN
             column_x := hit.column_x;
