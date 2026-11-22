@@ -139,6 +139,16 @@ BEGIN
         RAISE EXCEPTION 'Near clipping must keep the visible part of a wall';
     END IF;
 
+    -- The same portal wall is bright on its front side and shaded on its back side.
+    UPDATE doom.sectors SET light_level = 127 WHERE level_id = test_level AND sector_id = 1;
+    INSERT INTO doom.sector_state (game_id, level_id, sector_id, floor_height, ceiling_height)
+    VALUES (reverse_game, test_level, 0, 0, 0);
+
+    frame := doom.render(reverse_game, 7, 9);
+    IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('685008', 'hex') THEN
+        RAISE EXCEPTION 'A back-facing portal must use the viewing sector light level';
+    END IF;
+
     BEGIN
         PERFORM doom.render(test_game, 0, 30);
         RAISE EXCEPTION 'Zero width should fail';

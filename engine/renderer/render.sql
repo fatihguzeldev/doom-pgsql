@@ -143,7 +143,11 @@ BEGIN
             WHERE line.level_id = camera.level_id
               AND line.front_sector_id IS DISTINCT FROM line.back_sector_id
         ), projected_lines AS MATERIALIZED (
-            SELECT line.*,
+            SELECT line.line_id, line.a_depth, line.a_right,
+                   near.sector_id AS near_id, far.shape AS far_surface,
+                   doom._render_rgb(line.wall_color, near.light_level) AS rgb,
+                   geometry.numerator, line.b_depth - line.a_depth AS delta_depth,
+                   line.b_right - line.a_right AS delta_right,
                    CASE WHEN line.a_depth >= near_depth THEN line.a_right / line.a_depth
                         ELSE (line.a_right + (line.b_right - line.a_right)
                             * (near_depth - line.a_depth) / (line.b_depth - line.a_depth)) / near_depth
@@ -153,13 +157,18 @@ BEGIN
                             * (near_depth - line.b_depth) / (line.a_depth - line.b_depth)) / near_depth
                    END AS b_slope
             FROM view_lines AS line
-            WHERE greatest(line.a_depth, line.b_depth) >= near_depth
+            CROSS JOIN LATERAL (SELECT line.a_depth * line.b_right - line.a_right * line.b_depth AS numerator) AS geometry
+            -- At a positive-depth hit the numerator and the ray determinant have the
+            -- same sign. Choose and shade the side of each line once, before expanding it.
+            JOIN surfaces AS near ON near.sector_id =
+                CASE WHEN geometry.numerator > 0 THEN line.front_sector_id ELSE line.back_sector_id END
+            LEFT JOIN surfaces AS far ON far.sector_id =
+                CASE WHEN geometry.numerator > 0 THEN line.back_sector_id ELSE line.front_sector_id END
+            WHERE greatest(line.a_depth, line.b_depth) >= near_depth AND geometry.numerator <> 0
         ), intersections AS (
             -- Only scan pixel centers between the near-clipped endpoints. A ray is
             -- (1, slope) in camera space, so its intersection t is already camera depth.
-            SELECT pixel.x AS column_x, sample.depth, line.line_id, line.wall_color,
-                   CASE WHEN ray.determinant > 0 THEN line.front_sector_id ELSE line.back_sector_id END AS near_id,
-                   CASE WHEN ray.determinant > 0 THEN line.back_sector_id ELSE line.front_sector_id END AS far_id
+            SELECT pixel.x AS column_x, sample.depth, line.line_id, line.rgb, line.near_id, line.far_surface
             FROM projected_lines AS line
             CROSS JOIN LATERAL generate_series(
                 least(p_width, greatest(0, ceil(focal * (1 + least(line.a_slope, line.b_slope)) - 0.500000001)))::integer,
@@ -167,10 +176,10 @@ BEGIN
             ) AS pixel(x)
             CROSS JOIN LATERAL (SELECT (pixel.x + 0.5 - focal) / focal AS slope) AS ray_angle
             CROSS JOIN LATERAL (SELECT
-                (line.b_right - line.a_right) - ray_angle.slope * (line.b_depth - line.a_depth) AS determinant
+                line.delta_right - ray_angle.slope * line.delta_depth AS determinant
             ) AS ray
             CROSS JOIN LATERAL (SELECT
-                (line.a_depth * line.b_right - line.a_right * line.b_depth) / nullif(ray.determinant, 0) AS depth,
+                line.numerator / nullif(ray.determinant, 0) AS depth,
                 (line.a_depth * ray_angle.slope - line.a_right) / nullif(ray.determinant, 0) AS along_line
             ) AS sample
             WHERE sample.depth >= near_depth
@@ -187,10 +196,12 @@ BEGIN
             JOIN surfaces AS surface ON surface.sector_id = actor.sector_id
             WHERE actor.game_id = p_game_id AND actor.kind <> 'player' AND kind.radius > 0
         ), visible_actors AS MATERIALIZED (
-            SELECT * FROM view_actors WHERE depth >= near_depth
+            SELECT actor.*, doom._render_rgb(actor.color, actor.light) AS rgb
+            FROM view_actors AS actor
+            WHERE actor.depth >= near_depth
         ), actor_slices AS (
             SELECT pixel.x AS column_x, actor.depth, actor.actor_id, actor.sector_id,
-                   doom._render_rgb(actor.color, actor.light) AS rgb,
+                   actor.rgb,
                    actor.z + actor.height * 0.5 * (1 - ellipse.extent) AS low_z,
                    actor.z + actor.height * 0.5 * (1 + ellipse.extent) AS high_z
             FROM visible_actors AS actor
@@ -203,13 +214,9 @@ BEGIN
             ) AS sample
             CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - sample.across * sample.across)) AS extent) AS ellipse
         )
-        SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id,
-               far.shape AS far_surface,
-               doom._render_rgb(i.wall_color, near.light_level) AS rgb,
+        SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id, i.far_surface, i.rgb,
                false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z
         FROM intersections AS i
-        JOIN surfaces AS near ON near.sector_id = i.near_id
-        LEFT JOIN surfaces AS far ON far.sector_id = i.far_id
         UNION ALL
         SELECT sprite.column_x, sprite.depth, sprite.actor_id, sprite.sector_id,
                NULL, sprite.rgb, true, sprite.low_z, sprite.high_z
