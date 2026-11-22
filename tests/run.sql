@@ -20,6 +20,7 @@
 \ir gates.sql
 \ir fire.sql
 \ir wad_inventory.sql
+\ir wad_low_aim.sql
 \ir pursuit.sql
 \ir health_pickups.sql
 \ir renderer.sql

@@ -37,9 +37,14 @@ RETURNS double precision
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    axis_slop CONSTANT double precision := 0.00000001;
+    eye_height double precision := doom._eye_z(p_actor.z);
     reach double precision;
     damage integer;
     target doom._shot_contact;
+    lower_target doom._shot_contact;
+    ray_x double precision;
+    ray_y double precision;
     weapon_reach integer;
     weapon_damage integer;
 BEGIN
@@ -49,8 +54,30 @@ BEGIN
         RETURN NULL;
     END IF;
 
-    target := doom._ray_hit(p_actor, reach, doom._eye_z(p_actor.z));
+    target := doom._ray_hit(p_actor, reach, eye_height);
     IF p_actor.kind = 'player' THEN
+        IF target.actor_id IS NULL AND EXISTS (
+            SELECT FROM doom.level_actor_bindings
+            WHERE level_id = p_actor.level_id AND use_wad_flags
+        ) THEN
+            lower_target := doom._ray_hit(p_actor, least(reach, 128), p_actor.z + 24);
+            IF lower_target.actor_id IS NOT NULL AND lower_target.distance >= axis_slop THEN
+                ray_x := cos(p_actor.angle);
+                ray_y := sin(p_actor.angle);
+                -- Require both heights to clear each portal before accepting the low contact.
+                IF EXISTS (
+                    SELECT FROM doom._ray_sectors(p_actor,
+                        CASE WHEN abs(ray_x) >= axis_slop / lower_target.distance
+                             THEN lower_target.distance * ray_x ELSE 0 END,
+                        CASE WHEN abs(ray_y) >= axis_slop / lower_target.distance
+                             THEN lower_target.distance * ray_y ELSE 0 END,
+                        eye_height) AS path
+                    WHERE path.end_t = 1 AND NOT path.end_blocked
+                ) THEN
+                    target := lower_target;
+                END IF;
+            END IF;
+        END IF;
         SELECT attack.reach, attack.damage INTO weapon_reach, weapon_damage
         FROM doom._wad_weapon_attack(p_actor.game_id, target.distance) AS attack;
         reach := least(reach, weapon_reach);
