@@ -60,6 +60,7 @@ CREATE TABLE doom.actor_types (
     radius double precision NOT NULL DEFAULT 16 CHECK (radius >= 0 AND radius < 'Infinity'),
     height double precision NOT NULL DEFAULT 56 CHECK (height > 0 AND height < 'Infinity'),
     color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215),
+    blocks_actors boolean NOT NULL DEFAULT true,
     sprite_material text CHECK (sprite_material <> ''),
     dead_sprite_material text CHECK (dead_sprite_material <> ''),
     sprite_frames text[] NOT NULL DEFAULT '{}' CHECK (
@@ -85,6 +86,7 @@ CREATE TABLE doom.actors (
     sector_id integer NOT NULL,
     kind text NOT NULL REFERENCES doom.actor_types,
     x double precision NOT NULL CHECK (abs(x) < 'Infinity'),
+    collision_x_bucket double precision GENERATED ALWAYS AS (floor(floor(x) / 64)) STORED,
     y double precision NOT NULL CHECK (abs(y) < 'Infinity'),
     z double precision NOT NULL CHECK (abs(z) < 'Infinity'),
     angle double precision NOT NULL DEFAULT 0 CHECK (abs(angle) < 'Infinity'),
@@ -97,6 +99,8 @@ CREATE TABLE doom.actors (
 );
 
 CREATE UNIQUE INDEX actors_one_player_per_game ON doom.actors (game_id) WHERE kind = 'player';
+-- Movement within a bucket can still use a heap-only update.
+CREATE INDEX actors_collision_x_bucket ON doom.actors (game_id, collision_x_bucket);
 
 CREATE FUNCTION doom.sector_at(p_level_id bigint, p_x double precision, p_y double precision)
 RETURNS integer

@@ -13,6 +13,7 @@ CREATE SCHEMA doom;
 \ir engine/wad/sprites.sql
 \ir engine/simulation/collision.sql
 \ir engine/simulation/movement.sql
+\ir engine/simulation/actor_collision.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql

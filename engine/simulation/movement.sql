@@ -27,6 +27,7 @@ RETURNS doom.actors
 LANGUAGE plpgsql STABLE
 AS $$
 DECLARE
+    clearance CONSTANT double precision := 0.00001;
     hit record;
     floor_at_destination integer;
     traversed double precision := '-Infinity';
@@ -40,9 +41,14 @@ DECLARE
     end_y double precision;
     sweep lseg;
     contact_at double precision;
+    actor_on_segment doom.actors;
 BEGIN
     IF p_radius IS NULL OR p_radius < 0 OR p_radius >= 'Infinity' THEN
         RAISE EXCEPTION 'invalid movement radius' USING ERRCODE = '22023';
+    END IF;
+
+    IF p_dx = 0 AND p_dy = 0 THEN
+        RETURN p_actor;
     END IF;
 
     -- An empty swept box keeps the entire body in the current sector.
@@ -56,8 +62,12 @@ BEGIN
           AND least(y1, y2) <= greatest(p_actor.y, p_actor.y + p_dy) + p_radius
           AND greatest(y1, y2) >= least(p_actor.y, p_actor.y + p_dy) - p_radius
     ) THEN
-        p_actor.x := p_actor.x + p_dx;
-        p_actor.y := p_actor.y + p_dy;
+        contact_at := doom._actor_contact(p_actor, p_dx, p_dy, p_height, p_radius);
+        IF contact_at IS NOT NULL THEN
+            stop_at := greatest(0, contact_at - clearance / sqrt(p_dx * p_dx + p_dy * p_dy));
+        END IF;
+        p_actor.x := p_actor.x + stop_at * p_dx;
+        p_actor.y := p_actor.y + stop_at * p_dy;
         RETURN p_actor;
     END IF;
 
@@ -146,10 +156,16 @@ BEGIN
                                                  THEN line.back_sector_id ELSE line.front_sector_id END,
                            p_actor.z, p_height)) END;
 
+            -- Portal crossings update the floor and sector; x and y still anchor the whole move.
+            actor_on_segment := p_actor;
+            actor_on_segment.x := start_x;
+            actor_on_segment.y := start_y;
+            contact_at := least(contact_at, doom._actor_contact(actor_on_segment, end_x - start_x,
+                                                               end_y - start_y, p_height, p_radius));
             IF contact_at IS NOT NULL THEN
                 stop_at := greatest(segment_start,
                     segment_start + contact_at * (segment_end - segment_start)
-                    - 0.00001 / sqrt(p_dx * p_dx + p_dy * p_dy));
+                    - clearance / sqrt(p_dx * p_dx + p_dy * p_dy));
                 EXIT;
             END IF;
         END IF;
@@ -175,7 +191,7 @@ BEGIN
         END IF;
 
         -- Keep the actor on the near side of a solid boundary.
-        stop_at := greatest(0, traversed, hit.t - 0.00001 / sqrt(p_dx * p_dx + p_dy * p_dy));
+        stop_at := greatest(0, traversed, hit.t - clearance / sqrt(p_dx * p_dx + p_dy * p_dy));
         EXIT;
     END LOOP;
 
