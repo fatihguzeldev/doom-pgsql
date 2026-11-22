@@ -5,6 +5,7 @@ import math
 import os
 import subprocess
 import sys
+from secrets import token_hex
 from contextlib import contextmanager
 from pathlib import Path
 from statistics import mean
@@ -70,8 +71,7 @@ def cpu_counts(container, *pids):
     paths = ['/sys/fs/cgroup/cpu.stat', *(f'/proc/{pid}/schedstat' for pid in pids)]
     lines = subprocess.check_output(['docker', 'exec', container, 'cat', *paths], text=True).splitlines()
     totals = {}
-    for lane, pid in zip(('tick_cpu_usec', 'frame_cpu_usec'), reversed(pids)):
-        # The proc entries are the final lines, in the opposite order of these pops.
+    for lane in ('tick_cpu_usec', 'frame_cpu_usec'):
         totals[lane] = int(lines.pop().split()[0]) // 1000
     counts = dict(line.split() for line in lines)
     totals['cpu_usec'] = int(counts['usage_usec'])
@@ -79,10 +79,8 @@ def cpu_counts(container, *pids):
     return totals
 
 
-def control(writer, reader):
-    writer.execute(b'CREATE TEMP TABLE benchmark_state (tic bigint)')
-    writer.execute(b'INSERT INTO benchmark_state VALUES (0)')
-    writer.prepare(b'''UPDATE benchmark_state SET tic = $3::bigint
+def control(writer, reader, table):
+    writer.prepare(b'''UPDATE ''' + table + b''' SET tic = $3::bigint
         WHERE $1::bigint = 1 AND $2::bigint = 1 AND $4::float8 IS NOT NULL
             AND $5::float8 IS NOT NULL AND $6::float8 IS NOT NULL
             AND $7::boolean IS NOT NULL AND $8::boolean IS NOT NULL RETURNING tic''')
@@ -108,14 +106,29 @@ def percentile(values, quantile):
     return round(sorted(values)[math.ceil(len(values) * quantile) - 1], 3) if values else None
 
 
-def measure(args, options):
+@contextmanager
+def control_table(options, enabled):
+    if not enabled:
+        yield None
+        return
+    table = f'public.doom_budget_{token_hex(8)}'.encode()
+    with Connection(options) as setup:
+        setup.execute(b'CREATE TABLE ' + table + b' (tic bigint NOT NULL)')
+        try:
+            setup.execute(b'INSERT INTO ' + table + b' VALUES (0)')
+            yield table
+        finally:
+            setup.execute(b'DROP TABLE ' + table)
+
+
+def measure(args, options, table):
     frames, tics, distinct = [], [], set()
     game = args.game or 1
     with Connection(options) as writer, Connection(options) as reader:
         pids = [integer(connection.execute(b'SELECT pg_backend_pid()')[0]) for connection in (reader, writer)]
         writer.execute(b"SET default_transaction_isolation TO 'repeatable read'")
         if args.control:
-            epoch, first_tic = control(writer, reader)
+            epoch, first_tic = control(writer, reader, table)
             initial = None
         else:
             epoch, first_tic = map(integer, writer.execute(GAME, game))
@@ -182,8 +195,8 @@ def main():
     if (args.control == (args.game is not None) or not math.isfinite(args.seconds) or args.seconds < 1
             or args.game is not None and args.game < 1 or args.in_flight is not None and args.in_flight < 1):
         parser.error('specify a positive game ID or --control, a duration of at least one second, and a positive limit')
-    with network(args.profile) as options:
-        print(json.dumps(measure(args, options)))
+    with network(args.profile) as options, control_table(options, args.control) as table:
+        print(json.dumps(measure(args, options, table)))
 
 
 if __name__ == '__main__':
