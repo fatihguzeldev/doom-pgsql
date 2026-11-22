@@ -309,4 +309,43 @@ if [ "$finished" != "$finish_tick|$finish_tick|$finish_x" ] || [ "$(cat "$scratc
     exit 1
 fi
 
-printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit and completion checks passed.\n'
+# A frame sees the palette and its shades from the same committed version.
+db -v level_id="$level_id" <<'SQL'
+INSERT INTO doom.level_palettes (level_id, palette) VALUES (:level_id, decode(repeat('c86432', 256), 'hex'));
+INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height, pixels, coverage)
+VALUES (:level_id, 'flat', 'MVCC', 1, 1, '\x00', '\xff');
+SQL
+palette_texel() {
+    db -v level_id="$level_id" <<'SQL'
+SELECT encode(doom._sample_render_frame(:level_id, ARRAY[
+    ROW(0, 0, 1, '\x000000', ROW('flat', 'MVCC', 127, 0, 0, 0, 0, false)::doom._render_mapping)
+]::doom._render_span[], 0.5, false), 'hex');
+SQL
+}
+start_owner "UPDATE doom.level_palettes SET palette = decode(repeat('142850', 256), 'hex') WHERE level_id = $level_id"
+if [ "$(palette_texel)" != 643219 ]; then
+    printf 'expected the original shade while the update was uncommitted\n' >&2
+    exit 1
+fi
+finish_owner
+if [ "$(palette_texel)" != 0a1428 ]; then
+    printf 'expected the new shade immediately after the palette update committed\n' >&2
+    exit 1
+fi
+
+# Reimport must compare against the locked palette, even when the visible bytes already match.
+start_owner "UPDATE doom.level_palettes SET palette = decode(repeat('c86432', 256), 'hex') WHERE level_id = $level_id"
+PGAPPNAME="$tick_app" db -c "SELECT doom.import_wad_materials($level_id,
+    decode('50574144010000000c030000' || repeat('142850', 256) || '0c00000000030000504c415950414c00', 'hex'))" \
+    >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+finish_peers
+shade=$(db -c "SELECT encode(substring(shade_bytes FROM 127 * 768 + 1 FOR 3), 'hex')
+    FROM doom.level_palettes WHERE level_id = $level_id")
+if [ "$shade" != 0a1428 ]; then
+    printf 'expected reimport to replace the palette committed while it waited\n' >&2
+    exit 1
+fi
+
+printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit, completion and palette checks passed.\n'
