@@ -3,4 +3,5 @@
 BEGIN;
 CREATE SCHEMA doom;
 \ir engine/world/world.sql
+\ir engine/wad/directory.sql
 COMMIT;
