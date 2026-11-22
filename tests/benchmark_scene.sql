@@ -23,10 +23,19 @@
 \else
     \set sprites false
 \endif
-\if :sprites
-    \set actor_kind 'benchmark sprite'
+\if :{?animated}
 \else
-    \set actor_kind 'benchmark pylon'
+    \set animated false
+\endif
+\if :animated
+    \set sprites true
+    \set actor_kind 'benchmark animated sprite'
+\else
+    \if :sprites
+        \set actor_kind 'benchmark sprite'
+    \else
+        \set actor_kind 'benchmark pylon'
+    \endif
 \endif
 
 BEGIN;
@@ -91,18 +100,24 @@ HAVING :'textured'::boolean OR :'sprites'::boolean;
 \if :sprites
     INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height,
                                       left_offset, top_offset, pixels, coverage)
-    SELECT :level_id, 'sprite', 'BENCHSP', 14, 38, 7, 38,
-           string_agg(decode(lpad(to_hex((x * 11 + y * 5) % 256), 2, '0'), 'hex'), ''::bytea ORDER BY x, y),
+    SELECT :level_id, 'sprite', material.name, 14, 38, 7, 38,
+           string_agg(decode(lpad(to_hex((x * 11 + y * 5 + material.phase) % 256), 2, '0'), 'hex'),
+                      ''::bytea ORDER BY x, y),
            string_agg(CASE WHEN (x + y / 4) % 4 < 3 THEN '\xff'::bytea ELSE '\x00'::bytea END,
                       ''::bytea ORDER BY x, y)
-    FROM generate_series(0, 13) AS x
-    CROSS JOIN generate_series(0, 37) AS y;
+    FROM (VALUES ('BENCHSP', 0), ('BENCHSP2', 64)) AS material(name, phase)
+    CROSS JOIN generate_series(0, 13) AS x
+    CROSS JOIN generate_series(0, 37) AS y
+    WHERE material.phase = 0 OR :'animated'::boolean
+    GROUP BY material.name;
 \endif
 
 SELECT doom.start_game(:level_id, 0, 32, 0) AS game_id \gset
 
-INSERT INTO doom.actor_types (kind, default_health, radius, height, color, sprite_material)
-SELECT :'actor_kind', 20, 7, 38, 14449480, CASE WHEN :'sprites'::boolean THEN 'BENCHSP' END
+INSERT INTO doom.actor_types (kind, default_health, radius, height, color, sprite_material,
+                              sprite_frames, sprite_frame_ticks)
+SELECT :'actor_kind', 20, 7, 38, 14449480, CASE WHEN :'sprites'::boolean THEN 'BENCHSP' END,
+       CASE WHEN :'animated'::boolean THEN ARRAY['BENCHSP', 'BENCHSP2'] ELSE ARRAY[]::text[] END, 3
 WHERE :actors > 0
 ON CONFLICT (kind) DO NOTHING;
 
