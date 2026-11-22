@@ -55,8 +55,8 @@ RETURN (
 -- All frame encodings consume the same composited spans from one snapshot.
 -- Estimated texture sampling cost can trigger LLVM compilation for a small frame.
 CREATE FUNCTION doom._render_frame(
-    p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean, p_compact boolean DEFAULT false,
-    p_column_major boolean DEFAULT false
+    p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean, p_compact boolean,
+    p_column_major boolean, p_first_column integer, p_column_count integer
 )
 RETURNS bytea
 LANGUAGE plpgsql STABLE PARALLEL SAFE
@@ -80,6 +80,7 @@ DECLARE
     wall_dv double precision;
     near_depth CONSTANT double precision := 0.001;
     pixel_epsilon CONSTANT double precision := 0.000000001;
+    last_column integer;
     column_x integer := -1;
     clip_top integer;
     clip_bottom integer;
@@ -111,6 +112,13 @@ BEGIN
         RAISE EXCEPTION 'frame dimensions must be 1 to 4096 with at most 1048576 pixels'
             USING ERRCODE = '22023';
     END IF;
+    IF p_first_column IS NULL OR p_column_count IS NULL OR p_first_column < 0 OR p_column_count < 1
+        OR p_first_column::bigint + p_column_count > p_width
+    THEN
+        RAISE EXCEPTION 'column window must be nonempty and within the frame width'
+            USING ERRCODE = '22023';
+    END IF;
+    last_column := p_first_column + p_column_count - 1;
 
     SELECT game.level_id, game.tick_number, actor.x, actor.y, actor.z, actor.angle,
            EXISTS (SELECT FROM doom.level_palettes AS palette WHERE palette.level_id = game.level_id)
@@ -220,7 +228,7 @@ BEGIN
             CROSS JOIN LATERAL (SELECT greatest(near_depth,
                 CASE WHEN line.numerator > 0 THEN line.b_depth ELSE line.a_depth END) AS depth
             ) AS vertex
-            WHERE bounds.first_col <= bounds.last_col
+            WHERE greatest(p_first_column, bounds.first_col) <= least(last_column, bounds.last_col)
         ), intersections AS (
             -- A ray is (1, slope) in camera space, so its intersection distance
             -- is already camera depth. Use the leftward depth derivative to sort
@@ -233,7 +241,9 @@ BEGIN
                         CASE WHEN (line.wall_surface).is_back THEN 1 - along.fraction ELSE along.fraction END
                    END AS wall_u
             FROM sampled_lines AS line
-            CROSS JOIN LATERAL generate_series(line.first_col, line.last_col) AS pixel(x)
+            CROSS JOIN LATERAL generate_series(
+                greatest(p_first_column, line.first_col), least(last_column, line.last_col)
+            ) AS pixel(x)
             CROSS JOIN LATERAL (SELECT (pixel.x + 0.5 - focal) / focal AS slope) AS ray_angle
             CROSS JOIN LATERAL (SELECT
                 line.delta_right - ray_angle.slope * line.delta_depth AS determinant
@@ -317,8 +327,8 @@ BEGIN
                 focal * (1 + actor.right_edge / actor.depth) - 0.5 AS right_x
             ) AS edges
             CROSS JOIN LATERAL generate_series(
-                least(p_width, greatest(0, ceil(edges.left_x)))::integer,
-                greatest(-1, least(p_width - 1, CASE WHEN actor.sprite_name IS NULL THEN floor(edges.right_x)
+                least(p_width, greatest(p_first_column, ceil(edges.left_x)))::integer,
+                greatest(-1, least(last_column, CASE WHEN actor.sprite_name IS NULL THEN floor(edges.right_x)
                     ELSE ceil(edges.right_x) - 1 END))::integer
             ) AS pixel(x)
             CROSS JOIN LATERAL (SELECT
@@ -341,7 +351,7 @@ BEGIN
         UNION ALL
         SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 0,
                NULL::doom.line_surfaces, NULL::double precision, NULL::doom._render_mapping
-        FROM generate_series(0, p_width - 1) AS pixel(x)
+        FROM generate_series(p_first_column, last_column) AS pixel(x)
         ORDER BY column_x, depth NULLS LAST, is_actor, depth_slope, hit_id
     LOOP
         IF hit.column_x <> column_x THEN
@@ -548,24 +558,32 @@ $$;
 CREATE FUNCTION doom.render(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
-RETURN doom._render_frame(p_game_id, p_width, p_height, false);
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, false, 0, p_width);
 
 -- RGB888 pixels, top to bottom within each column, columns ordered left to right.
 CREATE FUNCTION doom.render_columns(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
-RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, true);
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, true, 0, p_width);
+
+-- A window of column-major RGB888 pixels from the full viewport, starting at a zero-based column.
+CREATE FUNCTION doom.render_column_window(
+    p_game_id bigint, p_width integer, p_height integer, p_first_column integer, p_column_count integer
+)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, true, p_first_column, p_column_count);
 
 -- Seven-byte row changes: row and column as big-endian uint16, then RGB888.
 -- Row zero initializes every column. Later rows reuse colors until they change.
 CREATE FUNCTION doom.render_spans(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
-RETURN doom._render_frame(p_game_id, p_width, p_height, true);
+RETURN doom._render_frame(p_game_id, p_width, p_height, true, false, false, 0, p_width);
 
 -- A one-byte tag (0 for RGB888, 1 for spans) precedes the smaller body.
 -- Equal body sizes use RGB888.
 CREATE FUNCTION doom.render_compact(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
-RETURN doom._render_frame(p_game_id, p_width, p_height, false, true);
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, true, false, 0, p_width);

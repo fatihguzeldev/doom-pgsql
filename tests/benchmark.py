@@ -68,6 +68,7 @@ def measure(args, connection_options=b""):
     width = str(args.width).encode()
     height = str(args.height).encode()
     ticks = str(args.ticks).encode()
+    window = getattr(args, "window", None)
     rgb_bytes = args.width * args.height * 3
     fire = b", p_fire => true" if args.fire else b""
     queries = {
@@ -90,6 +91,13 @@ def measure(args, connection_options=b""):
         "split_inputs": (b"SELECT doom.step_compact($1, $2, $3, $4, $5, 0, 1, false, $6)",
                          lambda command: [game, width, height, *command], None),
     }
+    if window is not None:
+        first, count = window
+        queries["render_columns"] = (
+            b"SELECT doom.render_column_window($1, $2, $3, $4, $5)",
+            lambda _: [game, width, height, str(first).encode(), str(count).encode()],
+            count * args.height * 3,
+        )
     operations = {
         "split": ("tick", "render"),
         "split_inputs": ("tick_input", "tick_input", "tick_input", "split_inputs"),
@@ -186,6 +194,8 @@ def measure(args, connection_options=b""):
         }
         if args.mode in COMPACT_MODES:
             summary["encodings"] = encodings
+        if window is not None:
+            summary["window"] = window
         return summary
     finally:
         lib.PQfinish(connection)
@@ -220,6 +230,8 @@ def main():
     parser.add_argument("--game", type=int, default=1)
     parser.add_argument("--width", type=int, default=320)
     parser.add_argument("--height", type=int, default=200)
+    parser.add_argument("--window", type=int, nargs=2, metavar=("FIRST", "COUNT"),
+                        help="render only these columns of the full viewport in render_columns mode")
     parser.add_argument("--ticks", type=int, default=1)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--samples", type=int, default=100)
@@ -229,6 +241,10 @@ def main():
     args = parser.parse_args()
     if args.warmup < 0 or min(args.samples, args.width, args.height, args.ticks) < 1:
         parser.error("sample count, width, height and tick count must be positive")
+    if args.window is not None:
+        first, count = args.window
+        if args.mode != "render_columns" or first < 0 or count < 1 or first + count > args.width:
+            parser.error("--window requires render_columns and a positive count within the full width")
     if args.mode in INPUT_MODES and args.ticks != 1:
         parser.error("input modes always use four one-tic commands")
     if args.fire and args.mode not in {"tick", "step", "step_spans", "step_compact", "split", *INPUT_MODES}:
