@@ -146,3 +146,47 @@ $$;
 CREATE TRIGGER actors_prepare_insert
 BEFORE INSERT ON doom.actors
 FOR EACH ROW EXECUTE FUNCTION doom.prepare_actor_insert();
+
+CREATE FUNCTION doom.carry_floor_actors(p_game_id bigint, p_sector_id integer, p_from integer, p_to integer)
+RETURNS void
+LANGUAGE sql
+BEGIN ATOMIC
+    UPDATE doom.actors SET z = p_to
+    WHERE game_id = p_game_id AND sector_id = p_sector_id AND z = p_from AND p_from <> p_to;
+END;
+
+CREATE FUNCTION doom.apply_sector_floor()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    base_height integer;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF (OLD.game_id, OLD.level_id, OLD.sector_id) = (NEW.game_id, NEW.level_id, NEW.sector_id) THEN
+            IF OLD.floor_height <> NEW.floor_height THEN
+                PERFORM doom.carry_floor_actors(NEW.game_id, NEW.sector_id, OLD.floor_height, NEW.floor_height);
+            END IF;
+            RETURN NULL;
+        END IF;
+    END IF;
+
+    IF TG_OP <> 'INSERT' THEN
+        SELECT floor_height INTO base_height FROM doom.sectors
+        WHERE level_id = OLD.level_id AND sector_id = OLD.sector_id;
+        PERFORM doom.carry_floor_actors(OLD.game_id, OLD.sector_id, OLD.floor_height, base_height);
+    END IF;
+
+    IF TG_OP <> 'DELETE' THEN
+        SELECT floor_height INTO base_height FROM doom.sectors
+        WHERE level_id = NEW.level_id AND sector_id = NEW.sector_id;
+        PERFORM doom.carry_floor_actors(NEW.game_id, NEW.sector_id, base_height, NEW.floor_height);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER sector_state_apply_floor
+AFTER INSERT OR UPDATE OR DELETE ON doom.sector_state
+FOR EACH ROW EXECUTE FUNCTION doom.apply_sector_floor();
