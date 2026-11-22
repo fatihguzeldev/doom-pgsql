@@ -188,6 +188,10 @@ BEGIN
                 AND face.line_id = line.line_id AND face.is_back = (geometry.numerator < 0)
             WHERE greatest(line.a_depth, line.b_depth) >= near_depth AND geometry.numerator <> 0
               AND (line.front_sector_id IS DISTINCT FROM line.back_sector_id OR face.middle_material IS NOT NULL)
+              -- Unclipped endpoints on the same outside edge cannot cover a screen column.
+              AND (least(line.a_depth, line.b_depth) < near_depth
+                   OR ((line.a_right >= -line.a_depth OR line.b_right >= -line.b_depth)
+                       AND (line.a_right <= line.a_depth OR line.b_right <= line.b_depth)))
         ), sampled_lines AS MATERIALIZED (
             -- Use a left-open, right-closed screen interval. At a shared vertex
             -- this is equivalent to moving the ray an infinitesimal step left.
