@@ -9,6 +9,7 @@ DECLARE
     floor_at_destination integer;
     ceiling_at_opening integer;
     traversed double precision := '-Infinity';
+    crossed_lines integer[] := ARRAY[]::integer[];
     stop_at double precision := 1;
 BEGIN
     LOOP
@@ -33,8 +34,9 @@ BEGIN
                OR (line.back_sector_id = p_actor.sector_id AND ray.den > 0))
           AND position.u BETWEEN 0 AND 1
           AND position.t BETWEEN 0 AND 1
-          AND position.t > traversed
-        ORDER BY position.t, line.line_id
+          AND position.t >= traversed
+          AND line.line_id <> ALL (crossed_lines)
+        ORDER BY position.t, (line.blocking OR line.back_sector_id IS NULL) DESC, line.line_id
         LIMIT 1;
 
         EXIT WHEN NOT FOUND;
@@ -57,8 +59,13 @@ BEGIN
             THEN
                 p_actor.sector_id := hit.neighbor;
                 p_actor.z := floor_at_destination;
+                -- Several boundaries can meet at one point. Consume each at most once there.
+                IF hit.t > traversed THEN
+                    crossed_lines := ARRAY[hit.line_id];
+                ELSE
+                    crossed_lines := array_append(crossed_lines, hit.line_id);
+                END IF;
                 traversed := hit.t;
-                EXIT WHEN traversed = 1;
                 CONTINUE;
             END IF;
         END IF;
