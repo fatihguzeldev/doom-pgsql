@@ -242,4 +242,22 @@ assert_gate '6|44|6'
 db -c "SELECT doom.tick($game_id)" >/dev/null
 assert_gate '6|60|6'
 
-printf 'Concurrent ticks, SQL edits, actor contacts and gate motion checks passed.\n'
+# A hit uses the target's committed health after waiting for its row.
+target_id=$(db -v game_id="$game_id" -v actor_kind="$actor_kind" <<'SQL'
+INSERT INTO doom.actors (game_id, sector_id, kind, x, y)
+VALUES (:game_id, 1, :'actor_kind', 300, 128)
+RETURNING actor_id;
+SQL
+)
+start_owner "UPDATE doom.actors SET health = 100 WHERE game_id = $game_id AND actor_id = $target_id"
+PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id, p_fire => true)" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+finish_peers
+health=$(db -c "SELECT health FROM doom.actors WHERE game_id = $game_id AND actor_id = $target_id")
+if [ "$health" != 80 ]; then
+    printf 'expected committed target health minus hit damage to be 80, observed %s\n' "$health" >&2
+    exit 1
+fi
+
+printf 'Concurrent ticks, SQL edits, contacts, gates and shot damage checks passed.\n'
