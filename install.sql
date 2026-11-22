@@ -38,6 +38,7 @@ CREATE SCHEMA doom;
 \ir engine/renderer/materials.sql
 \ir engine/renderer/masks.sql
 \ir engine/renderer/render.sql
+\ir engine/renderer/snapshot.sql
 \ir engine/step.sql
 \ir engine/wad/campaign.sql
 COMMIT;

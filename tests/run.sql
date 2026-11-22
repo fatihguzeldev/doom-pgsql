@@ -26,6 +26,7 @@
 \ir renderer.sql
 \ir render_compact.sql
 \ir render_columns.sql
+\ir render_snapshot.sql
 \ir render_materials.sql
 \ir render_sampling.sql
 \ir render_palette.sql
