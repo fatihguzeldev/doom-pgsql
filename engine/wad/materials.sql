@@ -1,3 +1,15 @@
+CREATE FUNCTION doom._wad_sky_name(p_level_name text)
+RETURNS text
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN (
+    SELECT CASE
+        WHEN name ~ '^E[234]M' THEN 'SKY' || substring(name FROM 2 FOR 1)
+        WHEN name ~ '^MAP(1[2-9]|20)' THEN 'SKY2'
+        WHEN name ~ '^MAP(2[1-9]|3[0-2])' THEN 'SKY3'
+        ELSE 'SKY1' END
+    FROM (VALUES (upper(replace(p_level_name, ' ', '') COLLATE "C"))) AS level(name)
+);
+
 CREATE FUNCTION doom._import_wad_materials(p_level_id bigint, p_wad bytea)
 RETURNS void
 LANGUAGE plpgsql STRICT
@@ -13,10 +25,22 @@ DECLARE
 BEGIN
     SELECT array_agg(DISTINCT material_name ORDER BY material_name)
     INTO wall_names
-    FROM doom.wad_sidedefs AS side
-    CROSS JOIN LATERAL (VALUES (side.upper_material), (side.lower_material), (side.middle_material))
-        AS surface(material_name)
-    WHERE side.level_id = p_level_id AND material_name IS NOT NULL;
+    FROM (
+        SELECT material_name
+        FROM doom.wad_sidedefs AS side
+        CROSS JOIN LATERAL (VALUES (side.upper_material), (side.lower_material), (side.middle_material))
+            AS surface(material_name)
+        WHERE side.level_id = p_level_id AND material_name IS NOT NULL
+
+        UNION ALL
+
+        SELECT doom._wad_sky_name(level.name)
+        FROM doom.levels AS level
+        WHERE level.level_id = p_level_id AND EXISTS (
+            SELECT FROM doom.sectors AS sector
+            WHERE sector.level_id = level.level_id AND sector.ceiling_material = 'F_SKY1'
+        )
+    ) AS walls;
 
     SELECT array_agg(DISTINCT material_name ORDER BY material_name)
     INTO flat_names

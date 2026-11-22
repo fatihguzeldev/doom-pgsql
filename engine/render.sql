@@ -535,7 +535,7 @@ DECLARE
     max_shade integer;
 BEGIN
     SELECT game.epoch, game.tick_number, game.level_id, actor.x, actor.y, actor.z, actor.angle, actor.sector_id,
-        replace(level.name, ' ', '') AS level_name
+        level.name AS level_name
     INTO camera
     FROM doom.games AS game
     JOIN doom.levels AS level USING (level_id)
@@ -568,10 +568,7 @@ BEGIN
     fy := sin(camera.angle);
     -- Viewpoint height follows the live actor's feet, including stairs and lifts.
     eye := camera.z + 41;
-    sky_name := CASE WHEN camera.level_name ~ '^E[234]M'
-        THEN 'SKY' || substring(camera.level_name FROM 2 FOR 1)
-        WHEN camera.level_name ~ '^MAP(1[2-9]|20)' THEN 'SKY2'
-        WHEN camera.level_name ~ '^MAP(2[1-9]|3[0-2])' THEN 'SKY3' ELSE 'SKY1' END;
+    sky_name := doom._wad_sky_name(camera.level_name);
     segment_ids := doom._frame_seg_ids(geometry.nodes, geometry.leaves, camera.x, camera.y, fx, fy);
 
     FOR hit IN SELECT * FROM doom._frame_hits(p_game_id, camera.level_id, camera.sector_id, segment_ids, camera.x, camera.y, fx, fy)

@@ -64,6 +64,7 @@ DECLARE
         ARRAY[pnames, first_catalog, base_patch, '\x00'::bytea, second_catalog, top_patch]);
     decoded text[];
     invalid record;
+    sky_level bigint;
 BEGIN
     SELECT array_agg(ARRAY[name, width::text, height::text, encode(pixels, 'hex'), encode(coverage, 'hex')]
                      ORDER BY name)
@@ -109,5 +110,23 @@ BEGIN
             NULL;
         END;
     END LOOP;
+
+    INSERT INTO doom.levels (name) VALUES ('E2M1') RETURNING level_id INTO sky_level;
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, ceiling_material)
+    VALUES (sky_level, 0, 0, 128, 'F_SKY1');
+    PERFORM doom._import_wad_materials(sky_level, pg_temp.wad_texture_archive(
+        ARRAY['PNAMES', 'TEXTURE1', 'PBASE', 'PLAYPAL', 'COLORMAP', 'F_SKY1'],
+        ARRAY[pnames, pg_temp.wad_texture_directory_fixture(ARRAY[
+            overlay(small_texture PLACING '\x534b593200000000'::bytea FROM 1 FOR 8)
+        ]), base_patch, decode(repeat('00', 768), 'hex'), decode(repeat('00', 256), 'hex'),
+            decode(repeat('00', 4096), 'hex')]
+    ));
+    IF (SELECT pixels FROM doom.level_materials
+        WHERE level_id = sky_level AND surface_kind = 'wall' AND name = 'SKY2')
+        IS DISTINCT FROM '\x01'::bytea
+    THEN
+        RAISE EXCEPTION 'sky selection must load the texture without a sidedef reference';
+    END IF;
+    DELETE FROM doom.levels WHERE level_id = sky_level;
 END;
 $$;
