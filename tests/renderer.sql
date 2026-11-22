@@ -7,6 +7,7 @@ DECLARE
     test_game bigint;
     empty_game bigint;
     reverse_game bigint;
+    near_actor bigint;
     frame bytea;
 BEGIN
     INSERT INTO doom.levels (name) VALUES ('Two colored rooms')
@@ -58,6 +59,43 @@ BEGIN
         OR (SELECT tick_number FROM doom.games WHERE game_id = test_game) <> 0
     THEN
         RAISE EXCEPTION 'Rendering the same game must be deterministic and leave its clock alone';
+    END IF;
+
+    INSERT INTO doom.actor_types (kind, default_health, radius, height, color)
+    VALUES ('fixture-mote', 5, 12, 64, x'E0F090'::integer),
+           ('fixture-beacon', 5, 12, 64, x'88E8FB'::integer);
+
+    INSERT INTO doom.actors (game_id, kind, x, y)
+    VALUES (test_game, 'fixture-mote', -32, 0);
+
+    IF doom.render(test_game, 7, 9) IS DISTINCT FROM frame THEN
+        RAISE EXCEPTION 'An actor behind the camera must leave the frame unchanged';
+    END IF;
+
+    INSERT INTO doom.actors (game_id, kind, x, y)
+    VALUES (test_game, 'fixture-mote', 96, 0);
+
+    frame := doom.render(test_game, 7, 9);
+    IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('E0F090', 'hex') THEN
+        RAISE EXCEPTION 'An inserted actor must be visible through an open portal';
+    END IF;
+
+    INSERT INTO doom.actors (game_id, kind, x, y)
+    VALUES (test_game, 'fixture-beacon', 32, 0)
+    RETURNING actor_id INTO near_actor;
+
+    frame := doom.render(test_game, 7, 9);
+    IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('88E8FB', 'hex') THEN
+        RAISE EXCEPTION 'The nearer actor must occlude the farther actor';
+    END IF;
+
+    UPDATE doom.actors SET health = 0 WHERE game_id = test_game AND actor_id = near_actor;
+
+    frame := doom.render(test_game, 7, 9);
+    IF substring(frame FROM (4 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('E0F090', 'hex')
+        OR substring(frame FROM (8 * 7 + 3) * 3 + 1 FOR 3) IS DISTINCT FROM decode('5B9BA7', 'hex')
+    THEN
+        RAISE EXCEPTION 'A dead actor must reveal the live actor and leave a darker silhouette on the floor';
     END IF;
 
     INSERT INTO doom.games (level_id) VALUES (test_level)

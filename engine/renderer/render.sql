@@ -22,6 +22,40 @@ RETURN decode(lpad(to_hex(
     | (((p_color & 255) * p_light + 127) / 255)
 ), 6, '0'), 'hex');
 
+-- Actor spans arrive front to back. Subtract nearer spans before unpacking the
+-- packed RGB rows, so neither overdraw nor sorting scales with actor pixel count.
+CREATE FUNCTION doom._render_layer_actors(p_world doom._render_span[], p_actors doom._render_span[])
+RETURNS doom._render_span[]
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN (
+    WITH actor_rows AS MATERIALIZED (
+        SELECT column_x, rgb, depth_order, int4range(row_start, row_end) AS rows
+        FROM unnest(p_actors) WITH ORDINALITY AS actor(column_x, row_start, row_end, rgb, depth_order)
+    ), covered_rows AS (
+        SELECT column_x, range_agg(rows) AS mask
+        FROM actor_rows
+        GROUP BY column_x
+    ), actor_masks AS (
+        SELECT column_x, rows, rgb,
+               range_agg(rows) OVER (PARTITION BY column_x ORDER BY depth_order
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS mask
+        FROM actor_rows
+    ), pieces AS (
+        SELECT actor.column_x, visible.rows, actor.rgb
+        FROM actor_masks AS actor
+        CROSS JOIN LATERAL unnest(int4multirange(actor.rows)
+            - coalesce(actor.mask, '{}'::int4multirange)) AS visible(rows)
+        UNION ALL
+        SELECT base.column_x, visible.rows, base.rgb
+        FROM unnest(p_world) AS base
+        LEFT JOIN covered_rows AS covered ON covered.column_x = base.column_x
+        CROSS JOIN LATERAL unnest(int4multirange(int4range(base.row_start, base.row_end))
+            - coalesce(covered.mask, '{}'::int4multirange)) AS visible(rows)
+    )
+    SELECT array_agg(ROW(column_x, lower(rows), upper(rows), rgb)::doom._render_span)
+    FROM pieces
+);
+
 -- Renders RGB888 from the current transaction snapshot. Rows run top to bottom.
 CREATE FUNCTION doom.render(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
@@ -49,6 +83,7 @@ DECLARE
     scale double precision;
     hit record;
     spans doom._render_span[] := ARRAY[]::doom._render_span[];
+    actor_spans doom._render_span[] := ARRAY[]::doom._render_span[];
     row_patch record;
     rgb_row bytea;
     current_row_y integer := 0;
@@ -140,17 +175,49 @@ BEGIN
             ) AS sample
             WHERE sample.depth >= near_depth
               AND sample.along_line BETWEEN -0.000000001 AND 1.000000001
+        ), view_actors AS (
+            SELECT actor.actor_id, actor.sector_id, actor.z, kind.radius, kind.color,
+                   (actor.x - camera.x) * forward_x + (actor.y - camera.y) * forward_y AS depth,
+                   (actor.x - camera.x) * forward_y - (actor.y - camera.y) * forward_x AS sideways,
+                   CASE WHEN actor.life_state = 'dead' THEN kind.height * 0.2 ELSE kind.height END AS height,
+                   CASE WHEN actor.life_state = 'dead' THEN surface.light_level * 2 / 3
+                        ELSE surface.light_level END AS light
+            FROM doom.actors AS actor
+            JOIN doom.actor_types AS kind ON kind.kind = actor.kind
+            JOIN surfaces AS surface ON surface.sector_id = actor.sector_id
+            WHERE actor.game_id = p_game_id AND actor.kind <> 'player' AND kind.radius > 0
+        ), visible_actors AS MATERIALIZED (
+            SELECT * FROM view_actors WHERE depth >= near_depth
+        ), actor_slices AS (
+            SELECT pixel.x AS column_x, actor.depth, actor.actor_id, actor.sector_id,
+                   doom._render_rgb(actor.color, actor.light) AS rgb,
+                   actor.z + actor.height * 0.5 * (1 - ellipse.extent) AS low_z,
+                   actor.z + actor.height * 0.5 * (1 + ellipse.extent) AS high_z
+            FROM visible_actors AS actor
+            CROSS JOIN LATERAL generate_series(
+                least(p_width, greatest(0, ceil(focal * (1 + (actor.sideways - actor.radius) / actor.depth) - 0.5)))::integer,
+                greatest(-1, least(p_width - 1, floor(focal * (1 + (actor.sideways + actor.radius) / actor.depth) - 0.5)))::integer
+            ) AS pixel(x)
+            CROSS JOIN LATERAL (SELECT
+                ((pixel.x + 0.5 - focal) * actor.depth / focal - actor.sideways) / actor.radius AS across
+            ) AS sample
+            CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - sample.across * sample.across)) AS extent) AS ellipse
         )
-        SELECT i.column_x, i.depth, i.line_id, i.near_id,
+        SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id,
                far.shape AS far_surface,
-               doom._render_rgb(i.wall_color, near.light_level) AS wall_rgb
+               doom._render_rgb(i.wall_color, near.light_level) AS rgb,
+               false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z
         FROM intersections AS i
         JOIN surfaces AS near ON near.sector_id = i.near_id
         LEFT JOIN surfaces AS far ON far.sector_id = i.far_id
         UNION ALL
-        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL
+        SELECT sprite.column_x, sprite.depth, sprite.actor_id, sprite.sector_id,
+               NULL, sprite.rgb, true, sprite.low_z, sprite.high_z
+        FROM actor_slices AS sprite
+        UNION ALL
+        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL
         FROM generate_series(0, p_width - 1) AS pixel(x)
-        ORDER BY column_x, depth NULLS LAST, line_id
+        ORDER BY column_x, depth NULLS LAST, is_actor, hit_id
     LOOP
         IF hit.column_x <> column_x THEN
             column_x := hit.column_x;
@@ -163,7 +230,7 @@ BEGIN
             CONTINUE;
         END IF;
 
-        IF hit.line_id IS NULL THEN
+        IF hit.hit_id IS NULL THEN
             -- The remaining part of an open ray sees the current sector's planes.
             wall_top := greatest(clip_top, least(clip_bottom, ceil(center_y - 0.5)))::integer;
             spans := array_append(spans, ROW(column_x, clip_top, wall_top, current_sector.ceiling_rgb)::doom._render_span);
@@ -176,6 +243,18 @@ BEGIN
         END IF;
 
         scale := focal / hit.depth;
+        IF hit.is_actor THEN
+            -- Previous portal openings form a depth-correct clip for this sprite.
+            wall_top := greatest(clip_top, least(clip_bottom, ceil(center_y
+                + (eye_z - least(hit.high_z, current_sector.ceiling_height)) * scale - 0.5)))::integer;
+            wall_bottom := greatest(clip_top, least(clip_bottom, ceil(center_y
+                + (eye_z - greatest(hit.low_z, current_sector.floor_height)) * scale - 0.5)))::integer;
+            IF wall_top < wall_bottom THEN
+                actor_spans := array_append(actor_spans, ROW(column_x, wall_top, wall_bottom, hit.rgb)::doom._render_span);
+            END IF;
+            CONTINUE;
+        END IF;
+
         wall_top := greatest(clip_top, least(clip_bottom,
             ceil(center_y + (eye_z - current_sector.ceiling_height) * scale - 0.5)))::integer;
         wall_bottom := greatest(clip_top, least(clip_bottom,
@@ -188,7 +267,7 @@ BEGIN
         opening_floor := greatest(current_sector.floor_height, far_sector.floor_height);
         opening_ceiling := least(current_sector.ceiling_height, far_sector.ceiling_height);
         IF far_sector.sector_id IS NULL OR opening_floor >= opening_ceiling THEN
-            spans := array_append(spans, ROW(column_x, wall_top, wall_bottom, hit.wall_rgb)::doom._render_span);
+            spans := array_append(spans, ROW(column_x, wall_top, wall_bottom, hit.rgb)::doom._render_span);
             clip_top := clip_bottom;
             CONTINUE;
         END IF;
@@ -197,12 +276,16 @@ BEGIN
             ceil(center_y + (eye_z - opening_ceiling) * scale - 0.5)))::integer;
         opening_bottom := greatest(wall_top, least(wall_bottom,
             ceil(center_y + (eye_z - opening_floor) * scale - 0.5)))::integer;
-        spans := array_append(spans, ROW(column_x, wall_top, opening_top, hit.wall_rgb)::doom._render_span);
-        spans := array_append(spans, ROW(column_x, opening_bottom, wall_bottom, hit.wall_rgb)::doom._render_span);
+        spans := array_append(spans, ROW(column_x, wall_top, opening_top, hit.rgb)::doom._render_span);
+        spans := array_append(spans, ROW(column_x, opening_bottom, wall_bottom, hit.rgb)::doom._render_span);
         clip_top := opening_top;
         clip_bottom := opening_bottom;
         current_sector := far_sector;
     END LOOP;
+
+    IF cardinality(actor_spans) > 0 THEN
+        spans := doom._render_layer_actors(spans, actor_spans);
+    END IF;
 
     -- A span changes one column's color starting at row_start. Apply those changes
     -- to a single RGB row and reuse it for as many scanlines as stay identical.
