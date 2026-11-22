@@ -13,4 +13,5 @@
 \ir renderer.sql
 \ir render_materials.sql
 \ir render_masks.sql
+\ir render_sprites.sql
 \ir step.sql

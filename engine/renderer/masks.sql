@@ -3,28 +3,32 @@ RETURNS doom._render_span[]
 LANGUAGE sql STABLE STRICT PARALLEL SAFE
 RETURN (
     WITH overlays AS MATERIALIZED (
-        SELECT span.*, upper((span.mapping).material_name COLLATE "C") AS material_name
+        SELECT span.*, (span.mapping).surface_kind AS surface_kind,
+               upper((span.mapping).material_name COLLATE "C") AS material_name
         FROM unnest(p_overlays) WITH ORDINALITY AS span(column_x, row_start, row_end, rgb, mapping, depth_order)
     ), materials AS MATERIALIZED (
-        SELECT material.name, material.width, material.height,
+        SELECT material.surface_kind, material.name, material.width, material.height,
                substring(material.coverage FROM 1) AS coverage
         FROM doom.level_materials AS material
-        JOIN (SELECT DISTINCT material_name FROM overlays WHERE material_name IS NOT NULL) AS needed
-          ON needed.material_name = material.name
-        WHERE material.level_id = p_level_id AND material.surface_kind = 'wall'
+        JOIN (SELECT DISTINCT surface_kind, material_name FROM overlays
+              WHERE surface_kind IN ('wall', 'sprite') AND material_name IS NOT NULL) AS needed
+          ON needed.surface_kind = material.surface_kind AND needed.material_name = material.name
+        WHERE material.level_id = p_level_id
     ), opaque_runs AS (
         SELECT pixel.depth_order, range_agg(int4range(pixel.y, pixel.y + 1)) AS rows
         FROM (
             SELECT layer.depth_order, pixel.y
             FROM overlays AS layer
-            JOIN materials AS material ON material.name = layer.material_name
+            JOIN materials AS material ON material.surface_kind = layer.surface_kind AND material.name = layer.material_name
             CROSS JOIN LATERAL (SELECT floor((layer.mapping).u) AS u) AS horizontal
             CROSS JOIN LATERAL (SELECT CASE
+                WHEN layer.surface_kind = 'sprite' THEN CASE
+                    WHEN horizontal.u >= 0 AND horizontal.u < material.width THEN horizontal.u::bigint
+                END
                 WHEN horizontal.u >= -9223372036854775808::double precision
                     AND horizontal.u < 9223372036854775808::double precision
                 THEN ((horizontal.u::bigint % material.width + material.width) % material.width)
-                    * material.height
-            END AS base_texel OFFSET 0) AS source_column
+            END * material.height AS base_texel OFFSET 0) AS source_column
             CROSS JOIN LATERAL generate_series(layer.row_start, layer.row_end - 1) AS pixel(y)
             CROSS JOIN LATERAL (SELECT floor((layer.mapping).v + (layer.mapping).dv * pixel.y) AS v) AS vertical
             WHERE get_byte(material.coverage, CASE WHEN vertical.v >= 0 AND vertical.v < material.height

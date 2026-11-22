@@ -234,42 +234,69 @@ BEGIN
             SELECT actor.actor_id, actor.sector_id, actor.z, kind.radius, kind.color,
                    (actor.x - camera.x) * forward_x + (actor.y - camera.y) * forward_y AS depth,
                    (actor.x - camera.x) * forward_y - (actor.y - camera.y) * forward_x AS sideways,
+                   sprite.name AS sprite_name, sprite.width AS sprite_width, sprite.height AS sprite_height,
+                   sprite.left_offset, sprite.top_offset,
                    CASE WHEN actor.life_state = 'dead' THEN kind.height * 0.2 ELSE kind.height END AS height,
-                   CASE WHEN actor.life_state = 'dead' THEN surface.light_level * 2 / 3
+                   CASE WHEN actor.life_state = 'dead' AND sprite.name IS NULL THEN surface.light_level * 2 / 3
                         ELSE surface.light_level END AS light
             FROM doom.actors AS actor
             JOIN doom.actor_types AS kind ON kind.kind = actor.kind
             JOIN surfaces AS surface ON surface.sector_id = actor.sector_id
-            WHERE actor.game_id = p_game_id AND actor.kind <> 'player' AND kind.radius > 0
+            LEFT JOIN doom.level_materials AS sprite ON has_materials AND sprite.level_id = camera.level_id
+                AND sprite.surface_kind = 'sprite' AND sprite.name = upper(
+                    (CASE WHEN actor.life_state = 'dead' THEN kind.dead_sprite_material
+                          ELSE kind.sprite_material END) COLLATE "C")
+            WHERE actor.game_id = p_game_id AND actor.kind <> 'player'
+                AND (kind.radius > 0 OR sprite.name IS NOT NULL)
         ), visible_actors AS MATERIALIZED (
-            SELECT actor.*, doom._render_rgb(actor.color, actor.light) AS rgb
+            SELECT actor.*, doom._render_rgb(actor.color, actor.light) AS rgb,
+                   CASE WHEN actor.sprite_name IS NULL THEN actor.sideways - actor.radius
+                        ELSE actor.sideways - actor.left_offset END AS left_edge,
+                   CASE WHEN actor.sprite_name IS NULL THEN actor.sideways + actor.radius
+                        ELSE actor.sideways - actor.left_offset + actor.sprite_width END AS right_edge
             FROM view_actors AS actor
             WHERE actor.depth >= near_depth
         ), actor_slices AS (
             SELECT pixel.x AS column_x, actor.depth, actor.actor_id, actor.sector_id,
                    actor.rgb,
-                   actor.z + actor.height * 0.5 * (1 - ellipse.extent) AS low_z,
-                   actor.z + actor.height * 0.5 * (1 + ellipse.extent) AS high_z
+                   CASE WHEN actor.sprite_name IS NULL THEN actor.z + actor.height * 0.5 * (1 - ellipse.extent)
+                        ELSE actor.z + actor.top_offset - actor.sprite_height END AS low_z,
+                   CASE WHEN actor.sprite_name IS NULL THEN actor.z + actor.height * 0.5 * (1 + ellipse.extent)
+                        ELSE actor.z + actor.top_offset END AS high_z,
+                   CASE WHEN actor.sprite_name IS NOT NULL THEN ROW('sprite', actor.sprite_name, actor.light,
+                        sample.view_x - actor.left_edge,
+                        actor.z + actor.top_offset - eye_z + (0.5 - center_y) * sample.dv,
+                        0, sample.dv, false)::doom._render_mapping END AS mapping
             FROM visible_actors AS actor
+            CROSS JOIN LATERAL (SELECT
+                focal * (1 + actor.left_edge / actor.depth) - 0.5 AS left_x,
+                focal * (1 + actor.right_edge / actor.depth) - 0.5 AS right_x
+            ) AS edges
             CROSS JOIN LATERAL generate_series(
-                least(p_width, greatest(0, ceil(focal * (1 + (actor.sideways - actor.radius) / actor.depth) - 0.5)))::integer,
-                greatest(-1, least(p_width - 1, floor(focal * (1 + (actor.sideways + actor.radius) / actor.depth) - 0.5)))::integer
+                least(p_width, greatest(0, ceil(edges.left_x)))::integer,
+                greatest(-1, least(p_width - 1, CASE WHEN actor.sprite_name IS NULL THEN floor(edges.right_x)
+                    ELSE ceil(edges.right_x) - 1 END))::integer
             ) AS pixel(x)
             CROSS JOIN LATERAL (SELECT
-                ((pixel.x + 0.5 - focal) * actor.depth / focal - actor.sideways) / actor.radius AS across
+                (pixel.x + 0.5 - focal) * actor.depth / focal AS view_x,
+                actor.depth / focal AS dv
             ) AS sample
-            CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - sample.across * sample.across)) AS extent) AS ellipse
+            CROSS JOIN LATERAL (SELECT CASE WHEN actor.sprite_name IS NULL
+                THEN (sample.view_x - actor.sideways) / actor.radius END AS across) AS ellipse_sample
+            CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - ellipse_sample.across * ellipse_sample.across)) AS extent) AS ellipse
         )
         SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id, i.far_surface, i.rgb,
                false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z,
-               i.depth_slope, i.wall_surface, i.wall_u
+               i.depth_slope, i.wall_surface, i.wall_u, NULL::doom._render_mapping AS actor_mapping
         FROM intersections AS i
         UNION ALL
         SELECT sprite.column_x, sprite.depth, sprite.actor_id, sprite.sector_id,
-               NULL, sprite.rgb, true, sprite.low_z, sprite.high_z, 0, NULL::doom.line_surfaces, NULL::double precision
+               NULL, sprite.rgb, true, sprite.low_z, sprite.high_z, 0,
+               NULL::doom.line_surfaces, NULL::double precision, sprite.mapping
         FROM actor_slices AS sprite
         UNION ALL
-        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 0, NULL::doom.line_surfaces, NULL::double precision
+        SELECT pixel.x, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 0,
+               NULL::doom.line_surfaces, NULL::double precision, NULL::doom._render_mapping
         FROM generate_series(0, p_width - 1) AS pixel(x)
         ORDER BY column_x, depth NULLS LAST, is_actor, depth_slope, hit_id
     LOOP
@@ -307,7 +334,10 @@ BEGIN
                     + (eye_z - greatest(hit.low_z, current_sector.floor_height)) * scale - 0.5)))::integer;
                 IF wall_top < wall_bottom THEN
                     overlays := array_append(overlays,
-                        ROW(column_x, wall_top, wall_bottom, hit.rgb, NULL)::doom._render_span);
+                        ROW(column_x, wall_top, wall_bottom, hit.rgb, hit.actor_mapping)::doom._render_span);
+                    IF hit.actor_mapping IS NOT NULL THEN
+                        has_mask_candidates := true;
+                    END IF;
                 END IF;
                 CONTINUE;
             END IF;
