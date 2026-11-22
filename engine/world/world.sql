@@ -61,7 +61,19 @@ CREATE TABLE doom.actor_types (
     height double precision NOT NULL DEFAULT 56 CHECK (height > 0 AND height < 'Infinity'),
     color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215),
     sprite_material text CHECK (sprite_material <> ''),
-    dead_sprite_material text CHECK (dead_sprite_material <> '')
+    dead_sprite_material text CHECK (dead_sprite_material <> ''),
+    sprite_frames text[] NOT NULL DEFAULT '{}' CHECK (
+        CASE WHEN coalesce(array_ndims(sprite_frames), 1) = 1 THEN
+            array_position(sprite_frames, NULL) IS NULL AND array_position(sprite_frames, '') IS NULL
+        ELSE false END
+    ),
+    dead_sprite_frames text[] NOT NULL DEFAULT '{}' CHECK (
+        CASE WHEN coalesce(array_ndims(dead_sprite_frames), 1) = 1 THEN
+            array_position(dead_sprite_frames, NULL) IS NULL AND array_position(dead_sprite_frames, '') IS NULL
+        ELSE false END
+    ),
+    sprite_frame_ticks integer NOT NULL DEFAULT 1 CHECK (sprite_frame_ticks > 0),
+    dead_sprite_frame_ticks integer NOT NULL DEFAULT 1 CHECK (dead_sprite_frame_ticks > 0)
 );
 
 INSERT INTO doom.actor_types (kind, default_health) VALUES ('player', 100);
@@ -78,6 +90,7 @@ CREATE TABLE doom.actors (
     angle double precision NOT NULL DEFAULT 0 CHECK (abs(angle) < 'Infinity'),
     health integer NOT NULL,
     life_state text GENERATED ALWAYS AS (CASE WHEN health > 0 THEN 'alive' ELSE 'dead' END) STORED,
+    animation_start_tick bigint NOT NULL CHECK (animation_start_tick >= 0),
     PRIMARY KEY (game_id, actor_id),
     FOREIGN KEY (game_id, level_id) REFERENCES doom.games (game_id, level_id) ON DELETE CASCADE,
     FOREIGN KEY (level_id, sector_id) REFERENCES doom.sectors
@@ -109,7 +122,8 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    SELECT level_id INTO NEW.level_id FROM doom.games WHERE game_id = NEW.game_id;
+    SELECT level_id, tick_number INTO NEW.level_id, NEW.animation_start_tick
+    FROM doom.games WHERE game_id = NEW.game_id;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'game % does not exist', NEW.game_id USING ERRCODE = '23503';
     END IF;
@@ -148,6 +162,25 @@ $$;
 CREATE TRIGGER actors_prepare_insert
 BEFORE INSERT ON doom.actors
 FOR EACH ROW EXECUTE FUNCTION doom.prepare_actor_insert();
+
+CREATE FUNCTION doom.restart_actor_animation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- A plain read avoids locking the game after the actor during a health edit.
+    SELECT tick_number INTO NEW.animation_start_tick FROM doom.games WHERE game_id = NEW.game_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'game % does not exist', NEW.game_id USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER actors_restart_animation
+BEFORE UPDATE OF health ON doom.actors
+FOR EACH ROW WHEN ((OLD.health > 0) <> (NEW.health > 0))
+EXECUTE FUNCTION doom.restart_actor_animation();
 
 CREATE FUNCTION doom.carry_floor_actors(p_game_id bigint, p_sector_id integer, p_from integer, p_to integer)
 RETURNS void

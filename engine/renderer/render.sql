@@ -105,7 +105,7 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
-    SELECT game.level_id, actor.x, actor.y, actor.z, actor.angle,
+    SELECT game.level_id, game.tick_number, actor.x, actor.y, actor.z, actor.angle,
            EXISTS (SELECT FROM doom.level_palettes AS palette WHERE palette.level_id = game.level_id)
                AND EXISTS (SELECT FROM doom.level_materials AS material WHERE material.level_id = game.level_id)
                AS has_materials,
@@ -244,10 +244,29 @@ BEGIN
             FROM doom.actors AS actor
             JOIN doom.actor_types AS kind ON kind.kind = actor.kind
             JOIN surfaces AS surface ON surface.sector_id = actor.sector_id
-            LEFT JOIN doom.level_materials AS sprite ON has_materials AND sprite.level_id = camera.level_id
-                AND sprite.surface_kind = 'sprite' AND sprite.name = upper(
-                    (CASE WHEN actor.life_state = 'dead' THEN kind.dead_sprite_material
-                          ELSE kind.sprite_material END) COLLATE "C")
+            CROSS JOIN LATERAL (SELECT
+                CASE WHEN actor.life_state = 'dead' THEN kind.dead_sprite_frames ELSE kind.sprite_frames END AS frames,
+                CASE WHEN actor.life_state = 'dead' THEN kind.dead_sprite_frame_ticks
+                     ELSE kind.sprite_frame_ticks END AS frame_ticks,
+                CASE WHEN actor.life_state = 'dead' THEN kind.dead_sprite_material ELSE kind.sprite_material END AS static_name
+            ) AS clip
+            CROSS JOIN LATERAL (SELECT cardinality(clip.frames) AS frame_count,
+                greatest(0, camera.tick_number - actor.animation_start_tick) / clip.frame_ticks AS elapsed_frames
+            ) AS phase
+            LEFT JOIN doom.level_materials AS animated ON has_materials AND animated.level_id = camera.level_id
+                AND animated.surface_kind = 'sprite' AND animated.name = upper((
+                    CASE WHEN phase.frame_count > 0 THEN clip.frames[array_lower(clip.frames, 1) +
+                        (CASE WHEN actor.life_state = 'dead' THEN least(phase.elapsed_frames, phase.frame_count - 1)
+                              ELSE phase.elapsed_frames % phase.frame_count END)::integer]
+                    END) COLLATE "C")
+            LEFT JOIN doom.level_materials AS still ON has_materials AND animated.name IS NULL
+                AND still.level_id = camera.level_id AND still.surface_kind = 'sprite'
+                AND still.name = upper(clip.static_name COLLATE "C")
+            CROSS JOIN LATERAL (SELECT coalesce(animated.name, still.name) AS name,
+                coalesce(animated.width, still.width) AS width, coalesce(animated.height, still.height) AS height,
+                coalesce(animated.left_offset, still.left_offset) AS left_offset,
+                coalesce(animated.top_offset, still.top_offset) AS top_offset
+            ) AS sprite
             WHERE actor.game_id = p_game_id AND actor.kind <> 'player'
                 AND (kind.radius > 0 OR sprite.name IS NOT NULL)
         ), visible_actors AS MATERIALIZED (
