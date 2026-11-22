@@ -6,7 +6,7 @@ import shutil
 import sys
 import termios
 import tty
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from select import select
 from time import monotonic
@@ -125,26 +125,37 @@ def main():
     if args.in_flight < 1 or args.game is not None and args.game < 1:
         parser.error('game and pipeline limit must be positive')
 
-    with Connection() as setup, Connection() as writer, Connection() as reader:
+    with ExitStack() as stack:
+        setup = stack.enter_context(Connection())
         game = args.game
         if args.wad:
             data = base64.b64encode(args.wad.read_bytes()).decode('ascii')
             level = integer(setup.execute(b"SELECT doom.load_wad(decode($1, 'base64'), $2)", data, args.map)[0])
             game = integer(setup.execute(b'SELECT doom.start($1, $2)', level, args.skill)[0])
         epoch, first_tic = map(integer, setup.execute(GAME, game))
-        writer.execute(b"SET default_transaction_isolation TO 'repeatable read'")
-        writer.prepare(TICK)
-        reader.prepare(FRAME)
-        for lane in (writer, reader):
-            lane.start_pipeline()
+
+        def open_lanes():
+            with ExitStack() as lanes:
+                writer, reader = (lanes.enter_context(Connection(b'connect_timeout=2')) for _ in range(2))
+                writer.execute(b"SET default_transaction_isolation TO 'repeatable read'")
+                writer.prepare(TICK)
+                reader.prepare(FRAME)
+                writer.start_pipeline()
+                reader.start_pipeline()
+                stack.callback(lanes.pop_all().close)
+                return writer, reader
+
+        writer, reader = open_lanes()
         display = Display(setup, game)
         print(f'Game {game}. WASD to move, J/L or arrows to turn, E to use, Space to fire, Q to quit.', flush=True)
         try:
             with terminal():
-                run(writer, reader, game, epoch, first_tic, Keyboard(), display, lambda *_: None,
-                    in_flight=args.in_flight)
+                result = run(writer, reader, game, epoch, first_tic, Keyboard(), display, lambda *_: None,
+                             in_flight=args.in_flight, reconnect=open_lanes)
         except KeyboardInterrupt:
-            pass
+            return
+        if result['finished_at_tic'] is not None:
+            print(f"Level finished at tic {result['finished_at_tic']}.")
 
 
 if __name__ == '__main__':

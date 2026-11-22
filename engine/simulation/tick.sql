@@ -70,6 +70,7 @@ DECLARE
     session doom.games;
     command doom._sim_input := ROW(p_forward, p_strafe, p_turn, p_use, p_fire);
     player doom.actors;
+    previous_player doom.actors;
     before_move doom.actors;
     player_height CONSTANT integer := 56;
     player_radius CONSTANT integer := 16;
@@ -91,26 +92,33 @@ BEGIN
         RAISE EXCEPTION 'invalid tick input' USING ERRCODE = '22023';
     END IF;
 
-    SELECT * INTO session FROM doom.games WHERE game_id = p_game_id FOR NO KEY UPDATE;
+    -- Claim the next tic and persist its input in the same write.
+    UPDATE doom.games
+    SET tick_number = p_tic, last_input = command
+    WHERE game_id = p_game_id AND epoch = p_epoch AND tick_number = p_tic - 1
+      AND finished_at_tick IS NULL
+    RETURNING * INTO session;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'game % does not exist', p_game_id USING ERRCODE = 'P0002';
-    END IF;
-    IF p_epoch <> session.epoch THEN
-        RAISE EXCEPTION 'incorrect epoch for game %', p_game_id USING ERRCODE = '22023';
-    END IF;
-    IF p_tic = session.tick_number AND command IS DISTINCT FROM session.last_input THEN
-        RAISE EXCEPTION 'conflicting input for committed tic %', p_tic USING ERRCODE = '22023';
-    END IF;
-    IF p_tic <= session.tick_number OR session.finished_at_tick IS NOT NULL THEN
-        RETURN session.tick_number;
-    END IF;
-    IF p_tic <> session.tick_number + 1 THEN
-        RAISE EXCEPTION 'expected tic %, received %', session.tick_number + 1, p_tic USING ERRCODE = '22023';
+        SELECT * INTO session FROM doom.games WHERE game_id = p_game_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'game % does not exist', p_game_id USING ERRCODE = 'P0002';
+        END IF;
+        IF p_epoch <> session.epoch THEN
+            RAISE EXCEPTION 'incorrect epoch for game %', p_game_id USING ERRCODE = '22023';
+        END IF;
+        IF p_tic = session.tick_number AND command IS DISTINCT FROM session.last_input THEN
+            RAISE EXCEPTION 'conflicting input for committed tic %', p_tic USING ERRCODE = '22023';
+        END IF;
+        IF p_tic <= session.tick_number OR session.finished_at_tick IS NOT NULL THEN
+            RETURN session.tick_number;
+        END IF;
+        RAISE EXCEPTION 'expected tic %, received %', session.tick_number + 1, p_tic USING ERRCODE = 'PDT01';
     END IF;
 
     -- Plane movement updates grounded actors first, including an idle player.
     PERFORM doom._advance_motions(p_game_id, p_tic);
     SELECT * INTO STRICT player FROM doom.actors WHERE game_id = p_game_id AND kind = 'player';
+    previous_player := player;
     attack_ready := session.next_attack;
     IF player.health > 0 THEN
         IF p_turn <> 0 THEN
@@ -167,24 +175,35 @@ BEGIN
             END IF;
         END IF;
 
-        UPDATE doom.actors AS actor
-        SET x = player.x, y = player.y, z = player.z, angle = player.angle,
-            health = player.health, sector_id = player.sector_id,
-            animation_start_tick = CASE WHEN player.health = 0 THEN p_tic ELSE actor.animation_start_tick END
-        WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
-          AND (actor.x, actor.y, actor.z, actor.angle, actor.health, actor.sector_id) IS DISTINCT FROM
-               (player.x, player.y, player.z, player.angle, player.health, player.sector_id);
+        IF (player.x, player.y, player.z, player.angle, player.health, player.sector_id) IS DISTINCT FROM (
+            previous_player.x, previous_player.y, previous_player.z, previous_player.angle,
+            previous_player.health, previous_player.sector_id
+        ) THEN
+            UPDATE doom.actors AS actor
+            SET x = player.x, y = player.y, z = player.z, angle = player.angle,
+                health = player.health, sector_id = player.sector_id,
+                animation_start_tick = CASE WHEN player.health = 0 THEN p_tic ELSE actor.animation_start_tick END
+            WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
+              AND (actor.x, actor.y, actor.z, actor.angle, actor.health, actor.sector_id) IS NOT DISTINCT FROM (
+                  previous_player.x, previous_player.y, previous_player.z, previous_player.angle,
+                  previous_player.health, previous_player.sector_id);
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'player changed during tic %', p_tic USING ERRCODE = '40001';
+            END IF;
+        END IF;
 
         IF player.health > 0 AND pending_exit IS NULL THEN
             PERFORM doom._monster_turns(player, p_tic);
         END IF;
     END IF;
 
-    UPDATE doom.games
-    SET tick_number = p_tic, last_input = command, next_attack = attack_ready,
-        finished_at_tick = CASE WHEN pending_exit IS NOT NULL THEN p_tic END,
-        exit_kind = pending_exit
-    WHERE game_id = p_game_id;
+    IF attack_ready <> session.next_attack OR pending_exit IS NOT NULL THEN
+        UPDATE doom.games
+        SET next_attack = attack_ready,
+            finished_at_tick = CASE WHEN pending_exit IS NOT NULL THEN p_tic END,
+            exit_kind = pending_exit
+        WHERE game_id = p_game_id;
+    END IF;
     RETURN p_tic;
 END;
 $$;

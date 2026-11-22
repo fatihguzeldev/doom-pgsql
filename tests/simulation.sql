@@ -38,7 +38,7 @@ BEGIN
     BEGIN
         PERFORM doom.tick(game, game_epoch, 3, 0, 0, 0, false, false);
         RAISE EXCEPTION 'a skipped tick was accepted';
-    EXCEPTION WHEN invalid_parameter_value THEN
+    EXCEPTION WHEN SQLSTATE 'PDT01' THEN
         NULL;
     END;
     BEGIN
