@@ -4,12 +4,14 @@ BEGIN;
 CREATE SCHEMA doom;
 \ir engine/world/world.sql
 \ir engine/world/gates.sql
+\ir engine/world/line_actions.sql
 \ir engine/world/pursuits.sql
 \ir engine/world/pickups.sql
 \ir engine/world/level_things.sql
 \ir engine/world/surfaces.sql
 \ir engine/wad/directory.sql
 \ir engine/wad/level.sql
+\ir engine/wad/line_actions.sql
 \ir engine/wad/materials.sql
 \ir engine/wad/textures.sql
 \ir engine/wad/level_materials.sql
@@ -19,11 +21,13 @@ CREATE SCHEMA doom;
 \ir engine/simulation/movement.sql
 \ir engine/simulation/actor_collision.sql
 \ir engine/simulation/gates.sql
+\ir engine/simulation/floors.sql
 \ir engine/simulation/gate_use.sql
 \ir engine/simulation/ray.sql
 \ir engine/simulation/ray_targets.sql
 \ir engine/simulation/wad_inventory.sql
 \ir engine/simulation/fire.sql
+\ir engine/simulation/line_actions.sql
 \ir engine/simulation/pursuit.sql
 \ir engine/simulation/pickups.sql
 \ir engine/simulation/tick.sql

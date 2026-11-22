@@ -16,7 +16,9 @@ EXCEPTION WHEN lock_not_available THEN
 END;
 $$;
 
-CREATE FUNCTION doom._advance_gates(p_game_id bigint, p_player doom.actors DEFAULT NULL)
+CREATE FUNCTION doom._advance_gates(
+    p_game_id bigint, p_player doom.actors DEFAULT NULL, p_tick bigint DEFAULT NULL
+)
 RETURNS boolean
 LANGUAGE plpgsql
 AS $$
@@ -29,11 +31,16 @@ DECLARE
     target_ceiling integer;
     next_ceiling integer;
     moving_player_id bigint := CASE WHEN p_player.game_id = p_game_id THEN p_player.actor_id END;
+    current_tick bigint := coalesce(p_tick, (SELECT tick_number FROM doom.games WHERE game_id = p_game_id));
 BEGIN
     FOR motion IN
         SELECT * FROM doom.ceiling_motions WHERE game_id = p_game_id
         ORDER BY sector_id FOR NO KEY UPDATE
     LOOP
+        IF motion.resume_at_tick > current_tick THEN
+            motion_pending := true;
+            CONTINUE;
+        END IF;
         SELECT floor_height, ceiling_height INTO current_floor, current_ceiling
         FROM doom.sector_state
         WHERE game_id = p_game_id AND sector_id = motion.sector_id
@@ -83,10 +90,15 @@ BEGIN
             END IF;
         END IF;
 
-        IF next_ceiling = target_ceiling THEN
-            DELETE FROM doom.ceiling_motions WHERE game_id = p_game_id AND sector_id = motion.sector_id;
-        ELSE
+        IF next_ceiling <> target_ceiling THEN
             motion_pending := true;
+        ELSIF motion.return_height IS NOT NULL THEN
+            UPDATE doom.ceiling_motions SET target_height = motion.return_height, return_height = NULL,
+                                            resume_at_tick = current_tick + motion.delay_ticks
+            WHERE game_id = p_game_id AND sector_id = motion.sector_id;
+            motion_pending := true;
+        ELSE
+            DELETE FROM doom.ceiling_motions WHERE game_id = p_game_id AND sector_id = motion.sector_id;
         END IF;
     END LOOP;
 

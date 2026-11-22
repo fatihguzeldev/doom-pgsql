@@ -72,7 +72,8 @@ BEGIN
     ON CONFLICT (game_id, sector_id) DO UPDATE
     SET target_height = CASE WHEN motion.target_height = selected_gate.open_ceiling
                              THEN selected_gate.closed_ceiling ELSE selected_gate.open_ceiling END,
-        units_per_tick = EXCLUDED.units_per_tick;
+        units_per_tick = EXCLUDED.units_per_tick,
+        return_height = NULL, delay_ticks = 0, resume_at_tick = 0;
 
     RETURN true;
 END;

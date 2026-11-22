@@ -29,10 +29,21 @@ DECLARE
     player doom.actors;
     controls_player boolean := p_forward <> 0 OR p_strafe <> 0 OR p_turn <> 0;
     has_motion boolean;
+    has_floor_motion boolean;
     has_pursuers boolean;
     has_pickups boolean;
+    has_wad_items boolean;
+    has_cross_actions boolean;
+    has_sector_effects boolean;
     exit_sectors integer[];
     at_exit boolean;
+    current_tick bigint;
+    pending_exit text;
+    before_move doom.actors;
+    line_event doom._line_event;
+    line_id integer;
+    shot_reach double precision;
+    sector_effect record;
     actor_height double precision;
     actor_radius double precision;
     max_health integer;
@@ -62,6 +73,7 @@ BEGIN
 
     -- Read activity after taking the game lock so this sees its predecessor's committed state.
     SELECT EXISTS (SELECT FROM doom.ceiling_motions WHERE game_id = p_game_id),
+           EXISTS (SELECT FROM doom.floor_motions WHERE game_id = p_game_id),
            EXISTS (
                SELECT FROM doom.actor_pursuits AS pursuit
                CROSS JOIN LATERAL (
@@ -81,16 +93,33 @@ BEGIN
                    LIMIT 1
                ) AS available
            ),
+           EXISTS (
+               SELECT FROM doom.wad_item_pickups AS pickup
+               CROSS JOIN LATERAL (
+                   SELECT FROM doom.actors AS actor
+                   WHERE actor.game_id = p_game_id AND actor.kind = pickup.kind AND actor.life_state = 'alive'
+                   ORDER BY actor.collision_x_bucket
+                   LIMIT 1
+               ) AS available
+           ),
+           (p_forward <> 0 OR p_strafe <> 0) AND EXISTS (
+               SELECT FROM doom.line_actions AS action WHERE action.level_id = game_level_id AND action.activation = 'cross'
+           ),
+           EXISTS (SELECT FROM doom.wad_sector_properties AS sector
+                   WHERE sector.level_id = game_level_id AND sector.special IN (4, 5, 7, 11, 16)),
            (SELECT array_agg(destination.sector_id) FROM doom.level_exits AS destination
             WHERE destination.level_id = game_level_id)
-    INTO has_motion, has_pursuers, has_pickups, exit_sectors;
+    INTO has_motion, has_floor_motion, has_pursuers, has_pickups, has_wad_items,
+         has_cross_actions, has_sector_effects, exit_sectors;
     IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion
-        AND NOT has_pursuers AND NOT has_pickups AND exit_sectors IS NULL
+        AND NOT has_floor_motion AND NOT has_pursuers AND NOT has_pickups AND NOT has_wad_items
+        AND NOT has_sector_effects AND exit_sectors IS NULL
     THEN
         RETURN new_tick;
     END IF;
 
-    IF controls_player OR p_use OR p_fire OR has_pursuers OR has_pickups OR exit_sectors IS NOT NULL THEN
+    IF controls_player OR p_use OR p_fire OR has_pursuers OR has_pickups OR has_wad_items
+        OR has_sector_effects OR has_floor_motion OR exit_sectors IS NOT NULL THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
@@ -98,45 +127,90 @@ BEGIN
             controls_player := false;
             has_pursuers := false;
             has_pickups := false;
+            has_wad_items := false;
+            has_sector_effects := false;
         END IF;
     END IF;
 
     IF controls_player AND (p_forward <> 0 OR p_strafe <> 0) THEN
         speed := 8 / greatest(1.0, sqrt(p_forward * p_forward + p_strafe * p_strafe));
     END IF;
-    IF speed IS NOT NULL OR has_pickups THEN
+    IF speed IS NOT NULL OR has_pickups OR has_wad_items THEN
         SELECT height, radius, default_health INTO STRICT actor_height, actor_radius, max_health
         FROM doom.actor_types WHERE kind = player.kind;
     END IF;
 
     FOR tic IN 1..p_ticks LOOP
+        current_tick := new_tick - p_ticks + tic;
+        pending_exit := NULL;
         IF controls_player THEN
             player.angle := player.angle + p_turn;
         END IF;
         IF tic = 1 AND p_use AND player.life_state = 'alive' THEN
-            IF doom._use_gate(player) THEN
-                has_motion := true;
+            SELECT hit.line_id INTO line_id FROM doom._ray_line_action(player, 'use', 64) AS hit;
+            IF FOUND THEN
+                line_event := doom._activate_line_action(player, line_id);
+                has_motion := has_motion OR line_event.ceiling_motion;
+                has_floor_motion := has_floor_motion OR line_event.floor_motion;
+                pending_exit := line_event.exit_kind;
+            ELSE
+                has_motion := doom._use_gate(player) OR has_motion;
             END IF;
         END IF;
         IF has_motion THEN
-            has_motion := doom._advance_gates(p_game_id, player);
+            has_motion := doom._advance_gates(p_game_id, player, current_tick);
         END IF;
-        IF tic = 1 AND p_fire AND player.life_state = 'alive' THEN
-            PERFORM doom._fire_actor(player, new_tick - p_ticks + 1);
+        IF tic = 1 AND p_fire AND player.life_state = 'alive' AND pending_exit IS NULL THEN
+            shot_reach := doom._fire_actor(player, current_tick);
+            IF shot_reach > 0 THEN
+                SELECT hit.line_id INTO line_id FROM doom._ray_line_action(player, 'shoot', shot_reach) AS hit;
+                IF FOUND THEN
+                    line_event := doom._activate_line_action(player, line_id);
+                    has_motion := has_motion OR line_event.ceiling_motion;
+                    has_floor_motion := has_floor_motion OR line_event.floor_motion;
+                    pending_exit := line_event.exit_kind;
+                END IF;
+            END IF;
         END IF;
-        IF speed IS NOT NULL THEN
+        IF has_floor_motion THEN
+            has_floor_motion := doom._advance_floors(p_game_id, current_tick);
+            SELECT actor.z INTO player.z FROM doom.actors AS actor
+            WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id;
+        END IF;
+        IF speed IS NOT NULL AND pending_exit IS NULL THEN
+            IF has_cross_actions THEN
+                before_move := player;
+            END IF;
             camera_cos := cos(player.angle);
             camera_sin := sin(player.angle);
             player := doom.move_actor(player, speed * (p_forward * camera_cos - p_strafe * camera_sin),
                                       speed * (p_forward * camera_sin + p_strafe * camera_cos),
                                       actor_height, actor_radius);
+            IF has_cross_actions THEN
+                line_event := doom._cross_line_actions(before_move, player);
+                player := line_event.player;
+                has_motion := has_motion OR line_event.ceiling_motion;
+                has_floor_motion := has_floor_motion OR line_event.floor_motion;
+                pending_exit := line_event.exit_kind;
+            END IF;
         END IF;
         IF has_pickups AND player.health < max_health THEN
             player.health := doom._collect_health(player, actor_height, actor_radius, max_health);
         END IF;
-        at_exit := exit_sectors IS NOT NULL AND player.health > 0 AND player.sector_id = ANY (exit_sectors);
+        IF has_wad_items THEN
+            PERFORM doom._collect_wad_items(player, actor_height, actor_radius);
+        END IF;
+        IF has_sector_effects AND player.health > 0 AND (current_tick % 32 = 0 OR player.health <= 10) THEN
+            SELECT * INTO sector_effect FROM doom._wad_sector_health(player, current_tick);
+            player.health := sector_effect.health;
+            IF sector_effect.exits THEN
+                pending_exit := coalesce(pending_exit, 'normal');
+            END IF;
+        END IF;
+        at_exit := player.health > 0 AND (pending_exit IS NOT NULL
+            OR (exit_sectors IS NOT NULL AND player.sector_id = ANY (exit_sectors)));
         -- Write the pose before other actors use it or the batch returns.
-        IF controls_player AND (has_pursuers OR at_exit OR tic = p_ticks) THEN
+        IF controls_player AND (has_pursuers OR at_exit OR has_floor_motion OR player.health <= 0 OR tic = p_ticks) THEN
             UPDATE doom.actors AS actor
             SET x = player.x, y = player.y, z = player.z, angle = player.angle, sector_id = player.sector_id
             WHERE actor.game_id = p_game_id AND actor.actor_id = player.actor_id
@@ -144,20 +218,23 @@ BEGIN
                   IS DISTINCT FROM (player.x, player.y, player.z, player.angle, player.sector_id);
         END IF;
         IF has_pursuers THEN
-            player := doom._advance_pursuers(player, new_tick - p_ticks + tic);
-            IF player.health <= 0 THEN
-                controls_player := false;
-                has_pursuers := false;
-                has_pickups := false;
-                speed := NULL;
-            END IF;
+            player := doom._advance_pursuers(player, current_tick);
+        END IF;
+        IF player.health <= 0 THEN
+            controls_player := false;
+            has_pursuers := false;
+            has_pickups := false;
+            has_wad_items := false;
+            has_sector_effects := false;
+            speed := NULL;
         END IF;
         IF at_exit AND player.health > 0 THEN
-            new_tick := new_tick - p_ticks + tic;
-            UPDATE doom.games SET tick_number = new_tick, finished_at_tick = new_tick WHERE game_id = p_game_id;
-            RETURN new_tick;
+            UPDATE doom.games SET tick_number = current_tick, finished_at_tick = current_tick, exit_kind = pending_exit
+            WHERE game_id = p_game_id;
+            RETURN current_tick;
         END IF;
-        EXIT WHEN NOT controls_player AND NOT has_motion AND NOT has_pursuers;
+        EXIT WHEN NOT controls_player AND NOT has_motion AND NOT has_floor_motion
+            AND NOT has_pursuers AND NOT has_sector_effects;
     END LOOP;
 
     RETURN new_tick;
