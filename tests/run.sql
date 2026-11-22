@@ -9,6 +9,7 @@
 \ir wad_sprites.sql
 \ir wad_actor_bindings.sql
 \ir wad_actions.sql
+\ir wad_encounters.sql
 \ir simulation.sql
 \ir level_start.sql
 \ir level_exit.sql

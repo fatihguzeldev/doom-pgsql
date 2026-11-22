@@ -35,6 +35,7 @@ DECLARE
     has_wad_items boolean;
     has_cross_actions boolean;
     has_sector_effects boolean;
+    has_encounters boolean;
     exit_sectors integer[];
     at_exit boolean;
     current_tick bigint;
@@ -107,19 +108,20 @@ BEGIN
            ),
            EXISTS (SELECT FROM doom.wad_sector_properties AS sector
                    WHERE sector.level_id = game_level_id AND sector.special IN (4, 5, 7, 11, 16)),
+           EXISTS (SELECT FROM doom.encounter_floor_targets AS target WHERE target.level_id = game_level_id),
            (SELECT array_agg(destination.sector_id) FROM doom.level_exits AS destination
             WHERE destination.level_id = game_level_id)
     INTO has_motion, has_floor_motion, has_pursuers, has_pickups, has_wad_items,
-         has_cross_actions, has_sector_effects, exit_sectors;
+         has_cross_actions, has_sector_effects, has_encounters, exit_sectors;
     IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion
         AND NOT has_floor_motion AND NOT has_pursuers AND NOT has_pickups AND NOT has_wad_items
-        AND NOT has_sector_effects AND exit_sectors IS NULL
+        AND NOT has_sector_effects AND NOT has_encounters AND exit_sectors IS NULL
     THEN
         RETURN new_tick;
     END IF;
 
     IF controls_player OR p_use OR p_fire OR has_pursuers OR has_pickups OR has_wad_items
-        OR has_sector_effects OR has_floor_motion OR exit_sectors IS NOT NULL THEN
+        OR has_sector_effects OR has_floor_motion OR has_encounters OR exit_sectors IS NOT NULL THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
@@ -171,6 +173,9 @@ BEGIN
                     pending_exit := line_event.exit_kind;
                 END IF;
             END IF;
+        END IF;
+        IF tic = 1 AND has_encounters AND doom._queue_cleared_encounters(p_game_id, game_level_id) THEN
+            has_floor_motion := true;
         END IF;
         IF has_floor_motion THEN
             has_floor_motion := doom._advance_floors(p_game_id, current_tick);
