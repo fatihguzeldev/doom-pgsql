@@ -31,6 +31,11 @@ BEGIN
         'invalid render rolls back its tick batch';
     ASSERT (SELECT x FROM doom.actors WHERE game_id = test_game AND kind = 'player') = 16,
         'invalid render rolls back movement';
+
+    after_frame := doom.step_spans(test_game, 16, 64, -1);
+    ASSERT after_frame = doom.render_spans(test_game, 16, 64), 'compact step renders its new position';
+    ASSERT (SELECT x FROM doom.actors WHERE game_id = test_game AND kind = 'player') = 8,
+        'compact step writes the same simulation state';
 END;
 $$;
 
