@@ -198,9 +198,11 @@ BEGIN
                 pending_exit := line_event.exit_kind;
             END IF;
         END IF;
-        IF has_pickups AND player.health < player_settings.default_health THEN
-            player.health := doom._collect_health(player, player_settings.height, player_settings.radius,
-                                                  player_settings.default_health);
+        IF has_pickups THEN
+            IF player.health < player_settings.default_health THEN
+                player.health := doom._collect_health(player, player_settings.height, player_settings.radius,
+                                                      player_settings.default_health);
+            END IF;
         END IF;
         IF has_wad_items THEN
             PERFORM doom._collect_wad_items(player, player_settings.height, player_settings.radius);
