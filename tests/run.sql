@@ -10,6 +10,7 @@
 \ir simulation.sql
 \ir level_start.sql
 \ir movement_corner.sql
+\ir body_collision.sql
 \ir renderer.sql
 \ir render_materials.sql
 \ir render_masks.sql
