@@ -3,6 +3,7 @@
 BEGIN;
 CREATE SCHEMA doom;
 \ir engine/world/world.sql
+\ir engine/world/gates.sql
 \ir engine/world/level_things.sql
 \ir engine/world/surfaces.sql
 \ir engine/wad/directory.sql
@@ -14,6 +15,8 @@ CREATE SCHEMA doom;
 \ir engine/simulation/collision.sql
 \ir engine/simulation/movement.sql
 \ir engine/simulation/actor_collision.sql
+\ir engine/simulation/gates.sql
+\ir engine/simulation/gate_use.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql
