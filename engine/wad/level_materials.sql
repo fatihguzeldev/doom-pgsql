@@ -5,10 +5,12 @@ CREATE TABLE doom.level_palettes (
 
 CREATE TABLE doom.level_materials (
     level_id bigint NOT NULL REFERENCES doom.levels ON DELETE CASCADE,
-    surface_kind text NOT NULL CHECK (surface_kind IN ('wall', 'flat')),
+    surface_kind text NOT NULL CHECK (surface_kind IN ('wall', 'flat', 'sprite')),
     name text NOT NULL CHECK (name <> ''),
     width integer NOT NULL CHECK (width > 0),
     height integer NOT NULL CHECK (height > 0),
+    left_offset integer NOT NULL DEFAULT 0,
+    top_offset integer NOT NULL DEFAULT 0,
     pixels bytea NOT NULL CHECK (octet_length(pixels) = width::bigint * height),
     coverage bytea NOT NULL CHECK (octet_length(coverage) = width::bigint * height),
     PRIMARY KEY (level_id, surface_kind, name)
@@ -77,7 +79,7 @@ BEGIN
     INSERT INTO doom.level_palettes (level_id, palette)
     VALUES (p_level_id, substring(p_wad FROM palette_location[1] + 1 FOR 768))
     ON CONFLICT (level_id) DO UPDATE SET palette = EXCLUDED.palette;
-    DELETE FROM doom.level_materials WHERE level_id = p_level_id;
+    DELETE FROM doom.level_materials WHERE level_id = p_level_id AND surface_kind IN ('wall', 'flat');
 
     IF wall_names IS NOT NULL THEN
         INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height, pixels, coverage)

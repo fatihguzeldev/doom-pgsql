@@ -59,7 +59,9 @@ CREATE TABLE doom.actor_types (
     default_health integer NOT NULL CHECK (default_health > 0),
     radius double precision NOT NULL DEFAULT 16 CHECK (radius >= 0 AND radius < 'Infinity'),
     height double precision NOT NULL DEFAULT 56 CHECK (height > 0 AND height < 'Infinity'),
-    color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215)
+    color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215),
+    sprite_material text CHECK (sprite_material <> ''),
+    dead_sprite_material text CHECK (dead_sprite_material <> '')
 );
 
 INSERT INTO doom.actor_types (kind, default_health) VALUES ('player', 100);
