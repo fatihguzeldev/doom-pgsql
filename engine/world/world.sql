@@ -71,6 +71,7 @@ CREATE TABLE doom.actor_types (
     height double precision NOT NULL DEFAULT 56 CHECK (height > 0 AND height < 'Infinity'),
     color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215),
     blocks_actors boolean NOT NULL DEFAULT true,
+    shootable boolean NOT NULL DEFAULT true,
     attack_range integer NOT NULL DEFAULT 0 CHECK (attack_range >= 0),
     attack_damage integer NOT NULL DEFAULT 0 CHECK (attack_damage >= 0),
     sprite_material text CHECK (sprite_material <> ''),

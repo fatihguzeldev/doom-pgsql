@@ -34,7 +34,11 @@ BEGIN
         ray_length := greatest(abs(ray_dx), abs(ray_dy));
     END IF;
 
-    SELECT ceil(ceil(max(radius)) / 64) INTO bucket_reach FROM doom.actor_types;
+    SELECT ceil(ceil(max(radius)) / 64) INTO bucket_reach
+    FROM doom.actor_types WHERE shootable AND radius > 0;
+    IF bucket_reach IS NULL THEN
+        RETURN NULL;
+    END IF;
 
     RETURN (
     WITH path AS (
@@ -66,7 +70,7 @@ BEGIN
         ) AS contact
         WHERE actor.game_id = p_actor.game_id AND actor.sector_id = path.sector_id
           AND actor.actor_id IS DISTINCT FROM p_actor.actor_id AND actor.health > 0
-          AND kind.radius > 0 AND actor.z <= p_z AND p_z - actor.z < kind.height
+          AND kind.shootable AND kind.radius > 0 AND actor.z <= p_z AND p_z - actor.z < kind.height
           AND actor.collision_x_bucket BETWEEN
               floor(floor(p_actor.x + least(ray_dx * path.start_t, ray_dx * path.end_t)) / 64) - bucket_reach
               AND floor(floor(p_actor.x + greatest(ray_dx * path.start_t, ray_dx * path.end_t)) / 64) + bucket_reach
