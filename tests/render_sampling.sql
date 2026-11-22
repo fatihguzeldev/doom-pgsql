@@ -69,6 +69,13 @@ BEGIN
         RAISE EXCEPTION 'Mixed sampler packets must preserve exact texels and row-major changes';
     END IF;
 
+    UPDATE doom.level_materials SET coverage = set_byte(coverage, 1, 255)
+    WHERE level_id = test_level AND surface_kind = 'wall';
+    observed := doom._sample_render_frame(test_level, spans, 2.5, false);
+    IF substring(observed FROM 13 FOR 3) IS DISTINCT FROM '\x112233'::bytea THEN
+        RAISE EXCEPTION 'A direct opacity edit must affect the next frame';
+    END IF;
+
     DELETE FROM doom.level_palettes WHERE level_id = test_level;
     SELECT string_agg(int2send(span.row_start::smallint) || int2send(span.column_x::smallint) || span.rgb,
         ''::bytea ORDER BY span.row_start, span.column_x)
