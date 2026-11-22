@@ -60,6 +60,7 @@ SELECT EXISTS (
     WHERE datname = current_database() AND application_name = :'app'
       AND CASE :'expected'
               WHEN 'ready' THEN state = 'idle in transaction' AND query LIKE '%doom_concurrency_ready%'
+              WHEN 'advanced' THEN state = 'idle in transaction' AND query LIKE '%doom_concurrency_advanced%'
               WHEN 'blocked' THEN state = 'active' AND wait_event_type = 'Lock'
           END
 );
@@ -180,4 +181,65 @@ if [ "$released" != t ]; then
     printf 'expected committed death to release the path\n' >&2
     exit 1
 fi
-printf 'Concurrent tick, SQL edit, spawn, animation and actor contact checks passed.\n'
+
+db -v game_id="$game_id" -v level_id="$level_id" <<'SQL'
+INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height)
+VALUES (:level_id, 1, 0, 8);
+INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id)
+VALUES (:level_id, 4, 220, 200, 220, 64, 0);
+INSERT INTO doom.gates (level_id, sector_id, closed_ceiling, open_ceiling, units_per_tick)
+VALUES (:level_id, 1, 8, 72, 16);
+INSERT INTO doom.gate_controls (level_id, line_id, sector_id) VALUES (:level_id, 4, 1);
+SQL
+
+assert_gate() {
+    actual=$(db -c "SELECT state.floor_height, state.ceiling_height, player.z
+        FROM doom.sector_state AS state JOIN doom.actors AS player USING (game_id)
+        WHERE state.game_id = $game_id AND state.sector_id = 1 AND player.kind = 'player'")
+    if [ "$actual" != "$1" ]; then
+        printf 'expected floor|ceiling|player z = %s, observed %s\n' "$1" "$actual" >&2
+        return 1
+    fi
+}
+
+advance_owner_tick() {
+    printf "SET LOCAL lock_timeout = '1s';\nSELECT doom.tick(%s, 0.125);\nSELECT 1 AS doom_concurrency_advanced;\n" \
+        "$game_id" >&3
+    wait_for_peer "$owner_app" advanced
+}
+
+# The idle tick should see the pending gate motion after the prior tick commits.
+start_owner "SELECT doom.tick($game_id, p_use => true)"
+PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id)" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+finish_peers
+assert_gate '0|40|0'
+
+# Hold the player while a raw floor update needs its lock for the carry trigger.
+db -c "UPDATE doom.actors SET x = 250, sector_id = 1 WHERE game_id = $game_id AND kind = 'player'"
+start_owner "SELECT actor_id FROM doom.actors WHERE game_id = $game_id AND kind = 'player' FOR NO KEY UPDATE"
+PGAPPNAME="$tick_app" db -c "UPDATE doom.sector_state SET floor_height = 4
+    WHERE game_id = $game_id AND sector_id = 1" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+advance_owner_tick
+finish_peers
+assert_gate '4|40|4'
+db -c "SELECT doom.tick($game_id)" >/dev/null
+assert_gate '4|56|4'
+
+# The same lock order can occur while another session inserts the first override.
+db -c "DELETE FROM doom.sector_state WHERE game_id = $game_id AND sector_id = 1"
+start_owner "SELECT actor_id FROM doom.actors WHERE game_id = $game_id AND kind = 'player' FOR NO KEY UPDATE"
+PGAPPNAME="$tick_app" db -c "INSERT INTO doom.sector_state (game_id, level_id, sector_id, floor_height, ceiling_height)
+    VALUES ($game_id, $level_id, 1, 6, 44)" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+advance_owner_tick
+finish_peers
+assert_gate '6|44|6'
+db -c "SELECT doom.tick($game_id)" >/dev/null
+assert_gate '6|60|6'
+
+printf 'Concurrent ticks, SQL edits, actor contacts and gate motion checks passed.\n'
