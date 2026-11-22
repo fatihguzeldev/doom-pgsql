@@ -149,7 +149,7 @@ BEGIN
     has_materials := camera.has_materials;
 
     FOR hit IN
-        WITH surfaces AS MATERIALIZED (
+        WITH RECURSIVE surfaces AS MATERIALIZED (
             SELECT sector.sector_id, sector.light_level,
                    ROW(sector.sector_id,
                        coalesce(state.floor_height, sector.floor_height),
@@ -161,86 +161,23 @@ BEGIN
             LEFT JOIN doom.sector_state AS state
                 ON state.game_id = p_game_id AND state.sector_id = sector.sector_id
             WHERE sector.level_id = camera.level_id
-        ), view_lines AS MATERIALIZED (
-            SELECT line.line_id, line.front_sector_id, line.back_sector_id, line.wall_color,
-                   (line.x1 - camera.x) * forward_x + (line.y1 - camera.y) * forward_y AS a_depth,
-                   (line.x2 - camera.x) * forward_x + (line.y2 - camera.y) * forward_y AS b_depth,
-                   (line.x1 - camera.x) * forward_y - (line.y1 - camera.y) * forward_x AS a_right,
-                   (line.x2 - camera.x) * forward_y - (line.y2 - camera.y) * forward_x AS b_right
-            FROM doom.lines AS line
-            WHERE line.level_id = camera.level_id
-              AND (has_materials OR line.front_sector_id IS DISTINCT FROM line.back_sector_id)
-        ), projected_lines AS MATERIALIZED (
-            SELECT line.line_id, line.a_depth, line.b_depth, line.a_right,
-                   near.sector_id AS near_id, far.shape AS far_surface,
-                   doom._render_rgb(line.wall_color, near.light_level) AS rgb,
-                   geometry.numerator, line.b_depth - line.a_depth AS delta_depth,
-                   line.b_right - line.a_right AS delta_right,
-                   face AS wall_surface,
-                   CASE WHEN face.upper_material IS NOT NULL OR face.lower_material IS NOT NULL
-                          OR face.middle_material IS NOT NULL
-                        THEN sqrt((line.b_depth - line.a_depth) ^ 2 + (line.b_right - line.a_right) ^ 2)
-                   END AS wall_length,
-                   CASE WHEN line.a_depth >= near_depth THEN line.a_right / line.a_depth
-                        ELSE (line.a_right + (line.b_right - line.a_right)
-                            * (near_depth - line.a_depth) / (line.b_depth - line.a_depth)) / near_depth
-                   END AS a_slope,
-                   CASE WHEN line.b_depth >= near_depth THEN line.b_right / line.b_depth
-                        ELSE (line.b_right + (line.a_right - line.b_right)
-                            * (near_depth - line.b_depth) / (line.a_depth - line.b_depth)) / near_depth
-                   END AS b_slope
-            FROM view_lines AS line
-            CROSS JOIN LATERAL (SELECT line.a_depth * line.b_right - line.a_right * line.b_depth AS numerator) AS geometry
-            -- At a positive-depth hit the numerator and the ray determinant have the
-            -- same sign. Choose and shade the side of each line once, before expanding it.
-            JOIN surfaces AS near ON near.sector_id =
-                CASE WHEN geometry.numerator > 0 THEN line.front_sector_id ELSE line.back_sector_id END
-            LEFT JOIN surfaces AS far ON far.sector_id =
-                CASE WHEN geometry.numerator > 0 THEN line.back_sector_id ELSE line.front_sector_id END
-            LEFT JOIN doom.line_surfaces AS face ON has_materials AND face.level_id = camera.level_id
-                AND face.line_id = line.line_id AND face.is_back = (geometry.numerator < 0)
-            WHERE greatest(line.a_depth, line.b_depth) >= near_depth AND geometry.numerator <> 0
-              AND (line.front_sector_id IS DISTINCT FROM line.back_sector_id OR face.middle_material IS NOT NULL)
-              -- Unclipped endpoints on the same outside edge cannot cover a screen column.
-              AND (least(line.a_depth, line.b_depth) < near_depth
-                   OR ((line.a_right >= -line.a_depth OR line.b_right >= -line.b_depth)
-                       AND (line.a_right <= line.a_depth OR line.b_right <= line.b_depth)))
-        ), sampled_lines AS MATERIALIZED (
-            -- Use a left-open, right-closed screen interval. At a shared vertex
-            -- this is equivalent to moving the ray an infinitesimal step left.
-            SELECT line.line_id, line.near_id, line.far_surface, line.rgb,
-                   line.numerator, line.delta_depth, line.delta_right,
-                   line.a_depth, line.a_right, line.wall_surface, line.wall_length,
-                   bounds.first_col, bounds.last_col,
-                   CASE WHEN abs(edge.right_x - bounds.last_col) <= pixel_epsilon
-                        THEN bounds.last_col END AS vertex_col,
-                   vertex.depth AS vertex_depth,
-                   -line.delta_depth * vertex.depth / line.numerator AS vertex_slope
-            FROM projected_lines AS line
-            CROSS JOIN LATERAL (SELECT
-                focal * (1 + least(line.a_slope, line.b_slope)) - 0.5 AS left_x,
-                focal * (1 + greatest(line.a_slope, line.b_slope)) - 0.5 AS right_x
-            ) AS edge
-            CROSS JOIN LATERAL (SELECT
-                least(p_width, greatest(0, floor(edge.left_x + pixel_epsilon) + 1))::integer AS first_col,
-                greatest(-1, least(p_width - 1, floor(edge.right_x + pixel_epsilon)))::integer AS last_col
-            ) AS bounds
-            CROSS JOIN LATERAL (SELECT greatest(near_depth,
-                CASE WHEN line.numerator > 0 THEN line.b_depth ELSE line.a_depth END) AS depth
-            ) AS vertex
-            WHERE greatest(p_first_column, bounds.first_col) <= least(last_column, bounds.last_col)
-        ), intersections AS (
+        ), camera_lines AS MATERIALIZED (
+            SELECT line.*, far.sector_id IS NOT NULL
+                       AND greatest((camera.camera_sector).floor_height, (far.shape).floor_height)
+                           < least((camera.camera_sector).ceiling_height, (far.shape).ceiling_height) AS has_opening
+            FROM doom._project_render_lines(camera.level_id, (camera.camera_sector).sector_id, true, has_materials,
+                camera.x, camera.y, forward_x, forward_y, focal, p_width, p_first_column, last_column,
+                near_depth, pixel_epsilon) AS line
+            LEFT JOIN surfaces AS far ON far.sector_id = line.far_id
+        ), camera_crossings AS MATERIALIZED (
             -- A ray is (1, slope) in camera space, so its intersection distance
             -- is already camera depth. Use the leftward depth derivative to sort
             -- simultaneous crossings at the same projected vertex.
-            SELECT pixel.x AS column_x, line.line_id, line.rgb, line.near_id, line.far_surface,
+            SELECT pixel.x AS column_x, line.line_id,
                    CASE WHEN pixel.x = line.vertex_col THEN line.vertex_depth ELSE sample.depth END AS depth,
                    CASE WHEN pixel.x = line.vertex_col THEN line.vertex_slope ELSE 0 END AS depth_slope,
-                   line.wall_surface,
-                   CASE WHEN line.wall_length IS NOT NULL THEN (line.wall_surface).x_offset + line.wall_length *
-                        CASE WHEN (line.wall_surface).is_back THEN 1 - along.fraction ELSE along.fraction END
-                   END AS wall_u
-            FROM sampled_lines AS line
+                   ray_angle.slope, ray.determinant, line.far_id AS far_sector_id, line.has_opening
+            FROM camera_lines AS line
             CROSS JOIN LATERAL generate_series(
                 greatest(p_first_column, line.first_col), least(last_column, line.last_col)
             ) AS pixel(x)
@@ -249,10 +186,108 @@ BEGIN
                 line.delta_right - ray_angle.slope * line.delta_depth AS determinant
             ) AS ray
             CROSS JOIN LATERAL (SELECT line.numerator / nullif(ray.determinant, 0) AS depth) AS sample
-            CROSS JOIN LATERAL (SELECT greatest(0, least(1,
-                (ray_angle.slope * line.a_depth - line.a_right) / nullif(ray.determinant, 0)
-            )) AS fraction) AS along
             WHERE sample.depth >= near_depth
+        ), first_hits AS MATERIALIZED (
+            SELECT DISTINCT ON (crossing.column_x) crossing.column_x, crossing.line_id, crossing.depth,
+                   crossing.far_sector_id, crossing.has_opening
+            FROM camera_crossings AS crossing
+            ORDER BY crossing.column_x, crossing.depth, crossing.depth_slope, crossing.line_id
+        ), openings AS MATERIALIZED (
+            SELECT first_hit.far_sector_id,
+                   range_agg(int4range(first_hit.column_x, first_hit.column_x + 1)) AS ranges
+            FROM first_hits AS first_hit
+            WHERE first_hit.has_opening
+            GROUP BY first_hit.far_sector_id
+        ), distant_lines AS MATERIALIZED (
+            SELECT line.*, far.sector_id IS NOT NULL
+                       AND greatest((near.shape).floor_height, (far.shape).floor_height)
+                           < least((near.shape).ceiling_height, (far.shape).ceiling_height) AS has_opening
+            FROM doom._project_render_lines(camera.level_id, (camera.camera_sector).sector_id, false, has_materials,
+                camera.x, camera.y, forward_x, forward_y, focal, p_width, p_first_column, last_column,
+                near_depth, pixel_epsilon) AS line
+            JOIN surfaces AS near ON near.sector_id = line.near_id
+            LEFT JOIN surfaces AS far ON far.sector_id = line.far_id
+            WHERE EXISTS (SELECT 1 FROM openings)
+        ), portal_windows AS MATERIALIZED (
+            SELECT line.near_id, line.far_id, int4range(line.first_col, line.last_col + 1) AS columns
+            FROM camera_lines AS line
+            WHERE line.has_opening
+            UNION ALL
+            SELECT line.near_id, line.far_id, int4range(line.first_col, line.last_col + 1)
+            FROM distant_lines AS line
+            WHERE line.has_opening
+        ), reached(hop, sector_id, columns) AS (
+            SELECT 1, opening.far_sector_id, span.columns
+            FROM openings AS opening
+            CROSS JOIN LATERAL unnest(opening.ranges) AS span(columns)
+            UNION
+            SELECT previous.hop + 1, portal.far_id, previous.columns * portal.columns
+            FROM reached AS previous
+            JOIN portal_windows AS portal ON portal.near_id = previous.sector_id
+                AND portal.columns && previous.columns
+            WHERE previous.hop < 3
+        ), sector_windows AS MATERIALIZED (
+            -- No depth or height sorting is needed to form a conservative candidate.
+            -- Overlap can admit extra lines, but never hides a reachable sector.
+            SELECT reachable.sector_id, range_agg(reachable.columns) AS ranges
+            FROM reached AS reachable
+            WHERE reachable.hop < 3
+            GROUP BY reachable.sector_id
+        ), farther_windows AS MATERIALIZED (
+            -- For deep portal chains, rejoin the exact crossing search on those columns.
+            SELECT coalesce(range_agg(reachable.columns), '{}'::int4multirange) AS ranges
+            FROM reached AS reachable
+            WHERE reachable.hop = 3
+        ), closed_columns AS MATERIALIZED (
+            SELECT first_hit.column_x, first_hit.line_id, first_hit.depth
+            FROM first_hits AS first_hit
+            WHERE NOT first_hit.has_opening
+        ), crossings AS (
+            SELECT crossing.column_x, crossing.line_id, crossing.depth, crossing.depth_slope,
+                   crossing.slope, crossing.determinant
+            FROM camera_crossings AS crossing
+            LEFT JOIN closed_columns AS closed USING (column_x)
+            WHERE closed.line_id IS NULL OR closed.line_id = crossing.line_id
+            UNION ALL
+            SELECT pixel.x, line.line_id,
+                   CASE WHEN pixel.x = line.vertex_col THEN line.vertex_depth ELSE sample.depth END,
+                   CASE WHEN pixel.x = line.vertex_col THEN line.vertex_slope ELSE 0 END,
+                   ray_angle.slope, ray.determinant
+            FROM distant_lines AS line
+            LEFT JOIN sector_windows AS sector_open ON sector_open.sector_id = line.near_id
+            CROSS JOIN farther_windows AS farther
+            CROSS JOIN LATERAL unnest((coalesce(sector_open.ranges, '{}'::int4multirange) + farther.ranges)
+                * int4multirange(int4range(line.first_col, line.last_col + 1))) AS visible(columns)
+            CROSS JOIN LATERAL generate_series(lower(visible.columns), upper(visible.columns) - 1) AS pixel(x)
+            CROSS JOIN LATERAL (SELECT (pixel.x + 0.5 - focal) / focal AS slope) AS ray_angle
+            CROSS JOIN LATERAL (SELECT
+                line.delta_right - ray_angle.slope * line.delta_depth AS determinant
+            ) AS ray
+            CROSS JOIN LATERAL (SELECT line.numerator / nullif(ray.determinant, 0) AS depth) AS sample
+            WHERE sample.depth >= near_depth
+        ), line_appearance AS MATERIALIZED (
+            SELECT line.*, doom._render_rgb(line.wall_color, near.light_level) AS rgb, far.shape AS far_surface,
+                   face AS wall_surface,
+                   CASE WHEN face.upper_material IS NOT NULL OR face.lower_material IS NOT NULL
+                          OR face.middle_material IS NOT NULL
+                        THEN sqrt(line.delta_depth ^ 2 + line.delta_right ^ 2)
+                   END AS wall_length
+            FROM (SELECT * FROM camera_lines UNION ALL SELECT * FROM distant_lines) AS line
+            JOIN surfaces AS near ON near.sector_id = line.near_id
+            LEFT JOIN surfaces AS far ON far.sector_id = line.far_id
+            LEFT JOIN doom.line_surfaces AS face ON has_materials AND face.level_id = camera.level_id
+                AND face.line_id = line.line_id AND face.is_back = line.is_back
+        ), intersections AS (
+            SELECT crossing.column_x, line.line_id, line.rgb, line.near_id, line.far_surface,
+                   crossing.depth, crossing.depth_slope, line.wall_surface,
+                   CASE WHEN line.wall_length IS NOT NULL THEN (line.wall_surface).x_offset + line.wall_length *
+                        CASE WHEN (line.wall_surface).is_back THEN 1 - along.fraction ELSE along.fraction END
+                   END AS wall_u
+            FROM crossings AS crossing
+            JOIN line_appearance AS line USING (line_id)
+            CROSS JOIN LATERAL (SELECT greatest(0, least(1,
+                (crossing.slope * line.a_depth - line.a_right) / nullif(crossing.determinant, 0)
+            )) AS fraction) AS along
         ), view_actors AS (
             SELECT actor.actor_id, actor.sector_id, actor.z, kind.radius, kind.color,
                    (actor.x - camera.x) * forward_x + (actor.y - camera.y) * forward_y AS depth,
@@ -301,6 +336,9 @@ BEGIN
                 coalesce(animated.top_offset, still.top_offset) AS top_offset
             ) AS sprite
             WHERE actor.game_id = p_game_id AND actor.kind <> 'player'
+                AND (actor.sector_id = (camera.camera_sector).sector_id
+                     OR EXISTS (SELECT FROM sector_windows AS visible WHERE visible.sector_id = actor.sector_id)
+                     OR EXISTS (SELECT FROM farther_windows AS visible WHERE NOT isempty(visible.ranges)))
                 AND (kind.radius > 0 OR sprite.name IS NOT NULL)
         ), visible_actors AS MATERIALIZED (
             SELECT actor.*, doom._render_rgb(actor.color, actor.light) AS rgb,
@@ -338,6 +376,12 @@ BEGIN
             CROSS JOIN LATERAL (SELECT CASE WHEN actor.sprite_name IS NULL
                 THEN (sample.view_x - actor.sideways) / actor.radius END AS across) AS ellipse_sample
             CROSS JOIN LATERAL (SELECT sqrt(greatest(0, 1 - ellipse_sample.across * ellipse_sample.across)) AS extent) AS ellipse
+            LEFT JOIN closed_columns AS closed ON closed.column_x = pixel.x
+            LEFT JOIN sector_windows AS sector_open ON sector_open.sector_id = actor.sector_id
+            CROSS JOIN farther_windows AS farther
+            WHERE CASE WHEN actor.sector_id = (camera.camera_sector).sector_id
+                THEN closed.column_x IS NULL OR actor.depth < closed.depth
+                ELSE sector_open.ranges @> pixel.x OR farther.ranges @> pixel.x END
         )
         SELECT i.column_x, i.depth, i.line_id::bigint AS hit_id, i.near_id, i.far_surface, i.rgb,
                false AS is_actor, NULL::double precision AS low_z, NULL::double precision AS high_z,
