@@ -23,6 +23,7 @@
 \ir wad_inventory.sql
 \ir wad_low_aim.sql
 \ir pursuit.sql
+\ir pursuit_batch.sql
 \ir health_pickups.sql
 \ir renderer.sql
 \ir render_compact.sql

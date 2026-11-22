@@ -20,9 +20,21 @@ AS $$
                    coalesce(target_state.ceiling_height, target.ceiling_height))
 $$;
 
-CREATE FUNCTION doom.move_actor(
+CREATE FUNCTION doom._movement_lines(p_level_id bigint, p_candidates integer[])
+RETURNS SETOF doom.lines
+LANGUAGE sql STABLE PARALLEL SAFE
+AS $$
+    -- Separate fallback and indexed lookups so a generic plan can use both keys.
+    SELECT line.* FROM doom.lines AS line
+    WHERE p_candidates IS NULL AND line.level_id = p_level_id
+    UNION ALL
+    SELECT line.* FROM doom.lines AS line
+    WHERE line.level_id = p_level_id AND line.line_id = ANY (p_candidates)
+$$;
+
+CREATE FUNCTION doom._move_actor(
     p_actor doom.actors, p_dx double precision, p_dy double precision, p_height double precision,
-    p_radius double precision DEFAULT 0
+    p_radius double precision, p_bodies doom._sim_body[]
 )
 RETURNS doom.actors
 LANGUAGE plpgsql STABLE
@@ -45,6 +57,7 @@ DECLARE
     sweep lseg;
     contact_at double precision;
     actor_on_segment doom.actors;
+    candidates integer[];
 BEGIN
     IF p_radius IS NULL OR p_radius < 0 OR p_radius >= 'Infinity' THEN
         RAISE EXCEPTION 'invalid movement radius' USING ERRCODE = '22023';
@@ -54,18 +67,25 @@ BEGIN
         RETURN p_actor;
     END IF;
 
+    IF greatest(abs(p_actor.x), abs(p_actor.y), abs(p_dx), abs(p_dy), p_radius) < 1e10 THEN
+        candidates := doom._wad_line_candidates(p_actor.level_id,
+            p_actor.x + least(0, p_dx) - p_radius - boundary_slop,
+            p_actor.y + least(0, p_dy) - p_radius - boundary_slop,
+            p_actor.x + greatest(0, p_dx) + p_radius + boundary_slop,
+            p_actor.y + greatest(0, p_dy) + p_radius + boundary_slop);
+    END IF;
+
     -- An empty swept box keeps the entire body in the current sector.
     IF p_radius > 0 AND NOT EXISTS (
-        SELECT FROM doom.lines
-        WHERE level_id = p_actor.level_id
-          AND (front_sector_id = p_actor.sector_id OR back_sector_id = p_actor.sector_id)
+        SELECT FROM doom._movement_lines(p_actor.level_id, candidates)
+        WHERE (front_sector_id = p_actor.sector_id OR back_sector_id = p_actor.sector_id)
           AND (blocking OR front_sector_id IS DISTINCT FROM back_sector_id)
           AND least(x1, x2) <= greatest(p_actor.x, p_actor.x + p_dx) + p_radius
           AND greatest(x1, x2) >= least(p_actor.x, p_actor.x + p_dx) - p_radius
           AND least(y1, y2) <= greatest(p_actor.y, p_actor.y + p_dy) + p_radius
           AND greatest(y1, y2) >= least(p_actor.y, p_actor.y + p_dy) - p_radius
     ) THEN
-        contact_at := doom._actor_contact(p_actor, p_dx, p_dy, p_height, p_radius);
+        contact_at := doom._actor_contact(p_actor, p_dx, p_dy, p_height, p_radius, p_bodies);
         IF contact_at IS NOT NULL THEN
             stop_at := greatest(0, contact_at - clearance / sqrt(p_dx * p_dx + p_dy * p_dy));
         END IF;
@@ -79,7 +99,7 @@ BEGIN
                CASE WHEN line.front_sector_id = p_actor.sector_id THEN line.back_sector_id
                     ELSE line.front_sector_id END AS neighbor
         INTO hit
-        FROM doom.lines AS line
+        FROM doom._movement_lines(p_actor.level_id, candidates) AS line
         CROSS JOIN LATERAL (
             SELECT line.x2::double precision - line.x1 AS ex,
                    line.y2::double precision - line.y1 AS ey,
@@ -90,8 +110,7 @@ BEGIN
             SELECT (edge.ox * edge.ey - edge.oy * edge.ex) / nullif(ray.den, 0) AS t,
                    (edge.ox * p_dy - edge.oy * p_dx) / nullif(ray.den, 0) AS u
         ) AS position
-        WHERE line.level_id = p_actor.level_id
-          AND (line.blocking OR line.front_sector_id IS DISTINCT FROM line.back_sector_id)
+        WHERE (line.blocking OR line.front_sector_id IS DISTINCT FROM line.back_sector_id)
           AND ((line.front_sector_id = p_actor.sector_id AND ray.den < 0)
                OR (line.back_sector_id = p_actor.sector_id AND ray.den > 0))
           AND position.u BETWEEN 0 AND 1
@@ -113,9 +132,8 @@ BEGIN
             -- The actor can touch an adjacent wall before its center enters that sector.
             WITH RECURSIVE nearby AS NOT MATERIALIZED (
                 SELECT line_id, x1, y1, x2, y2, front_sector_id, back_sector_id, blocking
-                FROM doom.lines
-                WHERE level_id = p_actor.level_id
-                  AND (blocking OR front_sector_id IS DISTINCT FROM back_sector_id)
+                FROM doom._movement_lines(p_actor.level_id, candidates)
+                WHERE (blocking OR front_sector_id IS DISTINCT FROM back_sector_id)
                   AND least(x1, x2) <= greatest(start_x, end_x) + p_radius
                   AND greatest(x1, x2) >= least(start_x, end_x) - p_radius
                   AND least(y1, y2) <= greatest(start_y, end_y) + p_radius
@@ -179,7 +197,7 @@ BEGIN
             actor_on_segment.x := start_x;
             actor_on_segment.y := start_y;
             contact_at := least(contact_at, doom._actor_contact(actor_on_segment, end_x - start_x,
-                                                               end_y - start_y, p_height, p_radius));
+                                                               end_y - start_y, p_height, p_radius, p_bodies));
             IF contact_at IS NOT NULL THEN
                 stop_at := greatest(segment_start,
                     segment_start + contact_at * (segment_end - segment_start)
@@ -218,3 +236,11 @@ BEGIN
     RETURN p_actor;
 END;
 $$;
+
+CREATE FUNCTION doom.move_actor(
+    p_actor doom.actors, p_dx double precision, p_dy double precision, p_height double precision,
+    p_radius double precision DEFAULT 0
+)
+RETURNS doom.actors
+LANGUAGE sql STABLE
+RETURN doom._move_actor(p_actor, p_dx, p_dy, p_height, p_radius, NULL);

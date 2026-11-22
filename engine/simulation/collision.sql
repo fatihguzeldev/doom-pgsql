@@ -1,3 +1,15 @@
+CREATE TYPE doom._sim_body AS (
+    actor_id bigint,
+    sector_id integer,
+    x double precision,
+    y double precision,
+    z double precision,
+    height double precision,
+    radius double precision,
+    blocks_actors boolean,
+    shootable boolean
+);
+
 CREATE FUNCTION doom._circle_segment_contact(
     p_x double precision, p_y double precision,
     p_dx double precision, p_dy double precision, p_radius double precision,
