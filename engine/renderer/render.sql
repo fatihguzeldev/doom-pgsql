@@ -253,15 +253,27 @@ BEGIN
             CROSS JOIN LATERAL (SELECT cardinality(clip.frames) AS frame_count,
                 greatest(0, camera.tick_number - actor.animation_start_tick) / clip.frame_ticks AS elapsed_frames
             ) AS phase
-            LEFT JOIN doom.level_materials AS animated ON has_materials AND animated.level_id = camera.level_id
-                AND animated.surface_kind = 'sprite' AND animated.name = upper((
-                    CASE WHEN phase.frame_count > 0 THEN clip.frames[array_lower(clip.frames, 1) +
-                        (CASE WHEN actor.life_state = 'dead' THEN least(phase.elapsed_frames, phase.frame_count - 1)
-                              ELSE phase.elapsed_frames % phase.frame_count END)::integer]
-                    END) COLLATE "C")
-            LEFT JOIN doom.level_materials AS still ON has_materials AND animated.name IS NULL
-                AND still.level_id = camera.level_id AND still.surface_kind = 'sprite'
-                AND still.name = upper(clip.static_name COLLATE "C")
+            CROSS JOIN LATERAL (SELECT CASE WHEN has_materials AND phase.frame_count > 0
+                THEN clip.frames[array_lower(clip.frames, 1) +
+                    (CASE WHEN actor.life_state = 'dead' THEN least(phase.elapsed_frames, phase.frame_count - 1)
+                          ELSE phase.elapsed_frames % phase.frame_count END)::integer]
+                END AS animated_name
+            ) AS selected
+            -- Keep the availability guards inside each lookup even with a generic plan.
+            LEFT JOIN LATERAL (
+                SELECT name, width, height, left_offset, top_offset FROM doom.level_materials
+                WHERE has_materials AND selected.animated_name IS NOT NULL
+                    AND level_id = camera.level_id AND surface_kind = 'sprite'
+                    AND name = upper(selected.animated_name COLLATE "C") COLLATE "default"
+                LIMIT 1
+            ) AS animated ON true
+            LEFT JOIN LATERAL (
+                SELECT name, width, height, left_offset, top_offset FROM doom.level_materials
+                WHERE has_materials AND animated.name IS NULL AND clip.static_name IS NOT NULL
+                    AND level_id = camera.level_id AND surface_kind = 'sprite'
+                    AND name = upper(clip.static_name COLLATE "C") COLLATE "default"
+                LIMIT 1
+            ) AS still ON true
             CROSS JOIN LATERAL (SELECT coalesce(animated.name, still.name) AS name,
                 coalesce(animated.width, still.width) AS width, coalesce(animated.height, still.height) AS height,
                 coalesce(animated.left_offset, still.left_offset) AS left_offset,
