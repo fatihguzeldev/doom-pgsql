@@ -25,6 +25,7 @@
 \ir health_pickups.sql
 \ir renderer.sql
 \ir render_compact.sql
+\ir render_columns.sql
 \ir render_materials.sql
 \ir render_sampling.sql
 \ir render_palette.sql

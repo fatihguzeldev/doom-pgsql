@@ -52,10 +52,11 @@ RETURN (
     FROM pieces
 );
 
--- Both frame encodings consume the same composited spans from one snapshot.
+-- All frame encodings consume the same composited spans from one snapshot.
 -- Estimated texture sampling cost can trigger LLVM compilation for a small frame.
 CREATE FUNCTION doom._render_frame(
-    p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean, p_compact boolean DEFAULT false
+    p_game_id bigint, p_width integer, p_height integer, p_span_packet boolean, p_compact boolean DEFAULT false,
+    p_column_major boolean DEFAULT false
 )
 RETURNS bytea
 LANGUAGE plpgsql STABLE PARALLEL SAFE
@@ -474,6 +475,9 @@ BEGIN
     IF cardinality(overlays) > 0 THEN
         spans := doom._render_layer_overlays(spans, overlays);
     END IF;
+    IF p_column_major THEN
+        RETURN doom._sample_render_frame(camera.level_id, spans, center_y, false, true);
+    END IF;
     IF has_materials THEN
         SELECT bool_or((span.mapping).material_name IS NOT NULL),
                sum(CASE WHEN (span.mapping).material_name IS NOT NULL THEN span.row_end - span.row_start ELSE 1 END)
@@ -545,6 +549,12 @@ CREATE FUNCTION doom.render(p_game_id bigint, p_width integer, p_height integer)
 RETURNS bytea
 LANGUAGE sql STABLE PARALLEL SAFE
 RETURN doom._render_frame(p_game_id, p_width, p_height, false);
+
+-- RGB888 pixels, top to bottom within each column, columns ordered left to right.
+CREATE FUNCTION doom.render_columns(p_game_id bigint, p_width integer, p_height integer)
+RETURNS bytea
+LANGUAGE sql STABLE PARALLEL SAFE
+RETURN doom._render_frame(p_game_id, p_width, p_height, false, false, true);
 
 -- Seven-byte row changes: row and column as big-endian uint16, then RGB888.
 -- Row zero initializes every column. Later rows reuse colors until they change.

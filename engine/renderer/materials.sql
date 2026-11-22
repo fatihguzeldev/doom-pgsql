@@ -1,5 +1,6 @@
 CREATE FUNCTION doom._sample_render_rows(
-    p_level_id bigint, p_spans doom._render_span[], p_center_y double precision, p_changes_only boolean
+    p_level_id bigint, p_spans doom._render_span[], p_center_y double precision, p_changes_only boolean,
+    p_column_major boolean DEFAULT false
 )
 RETURNS TABLE(ordinal integer, rgb bytea)
 LANGUAGE sql STABLE PARALLEL SAFE
@@ -39,40 +40,55 @@ BEGIN ATOMIC
         ) AS needed
         WHERE base.level_id = p_level_id
     )
-    -- Both coordinates fit uint16. The combined key also gives their packet byte order.
-    SELECT (raster.y << 16) | span.column_x AS ordinal,
-           CASE WHEN get_byte(material.coverage, raster.texel) > 0
-                THEN substring(palette.colors FROM 3 * get_byte(material.pixels, raster.texel) + 1 FOR 3)
-                ELSE span.rgb END AS rgb
+    SELECT sampled.ordinal, sampled.rgb
     FROM spans AS span
     LEFT JOIN materials AS material ON material.surface_kind = span.surface_kind AND material.name = span.material_name
     LEFT JOIN palettes AS palette ON palette.light = span.light
     CROSS JOIN LATERAL (
-        SELECT pixel.y, CASE
-            WHEN palette.colors IS NOT NULL AND material.width IS NOT NULL
-                AND (abs(sample.u) < 9223372036854775808::double precision OR sample.u = -9223372036854775808::double precision)
-                AND (abs(sample.v) < 9223372036854775808::double precision OR sample.v = -9223372036854775808::double precision)
-            THEN ((((sample.u::bigint % material.width) + material.width) % material.width) * material.height
-                + ((sample.v::bigint % material.height) + material.height) % material.height)::integer
-        END AS texel
-        FROM generate_series(span.row_start,
-            CASE WHEN p_changes_only AND (material.width IS NULL OR palette.colors IS NULL)
-                 THEN span.row_start ELSE span.row_end - 1 END
-        ) AS pixel(y)
-        CROSS JOIN LATERAL (SELECT nullif(pixel.y + 0.5::double precision - p_center_y, 0) AS distance) AS plane
-        CROSS JOIN LATERAL (SELECT
-            floor(CASE WHEN span.radial THEN span.u + span.du / plane.distance ELSE span.u + span.du * pixel.y END) AS u,
-            floor(CASE WHEN span.radial THEN span.v + span.dv / plane.distance ELSE span.v + span.dv * pixel.y END) AS v
-        ) AS sample
-        -- Project the texel with the generated row and share it across both byte lookups.
-        OFFSET 0
-    ) AS raster
+        WITH pixels AS NOT MATERIALIZED (
+            SELECT raster.y,
+                   CASE WHEN get_byte(material.coverage, raster.texel) > 0
+                        THEN substring(palette.colors FROM 3 * get_byte(material.pixels, raster.texel) + 1 FOR 3)
+                        ELSE span.rgb END AS rgb
+            FROM (
+                SELECT pixel.y, CASE
+                    WHEN palette.colors IS NOT NULL AND material.width IS NOT NULL
+                        AND (abs(sample.u) < 9223372036854775808::double precision OR sample.u = -9223372036854775808::double precision)
+                        AND (abs(sample.v) < 9223372036854775808::double precision OR sample.v = -9223372036854775808::double precision)
+                    THEN ((((sample.u::bigint % material.width) + material.width) % material.width) * material.height
+                        + ((sample.v::bigint % material.height) + material.height) % material.height)::integer
+                END AS texel
+                FROM generate_series(span.row_start,
+                    CASE WHEN (p_changes_only OR p_column_major) AND (material.width IS NULL OR palette.colors IS NULL)
+                         THEN span.row_start ELSE span.row_end - 1 END
+                ) AS pixel(y)
+                CROSS JOIN LATERAL (SELECT nullif(pixel.y + 0.5::double precision - p_center_y, 0) AS distance) AS plane
+                CROSS JOIN LATERAL (SELECT
+                    floor(CASE WHEN span.radial THEN span.u + span.du / plane.distance ELSE span.u + span.du * pixel.y END) AS u,
+                    floor(CASE WHEN span.radial THEN span.v + span.dv / plane.distance ELSE span.v + span.dv * pixel.y END) AS v
+                ) AS sample
+                -- Project the texel with the generated row and share it across both byte lookups.
+                OFFSET 0
+            ) AS raster
+        )
+        -- Both coordinates fit uint16. The combined key gives their packet byte order.
+        SELECT (pixels.y << 16) | span.column_x AS ordinal, pixels.rgb
+        FROM pixels WHERE NOT p_column_major
+        UNION ALL
+        SELECT (span.column_x << 16) | span.row_start,
+               CASE WHEN material.width IS NULL OR palette.colors IS NULL
+                    THEN decode(repeat(encode(span.rgb, 'hex'), span.row_end - span.row_start), 'hex')
+                    ELSE string_agg(pixels.rgb, ''::bytea ORDER BY pixels.y) END
+        FROM pixels WHERE p_column_major
+        HAVING p_column_major
+    ) AS sampled
     -- Keep material bytea fields out of the presorted aggregate's input sort.
     OFFSET 0;
 END;
 
 CREATE FUNCTION doom._sample_render_frame(
-    p_level_id bigint, p_spans doom._render_span[], p_center_y double precision, p_span_packet boolean
+    p_level_id bigint, p_spans doom._render_span[], p_center_y double precision, p_span_packet boolean,
+    p_column_major boolean DEFAULT false
 )
 RETURNS bytea
 LANGUAGE sql STABLE STRICT PARALLEL SAFE
@@ -81,7 +97,7 @@ RETURN (
         CASE WHEN p_span_packet THEN int4send(sampled.ordinal) || sampled.rgb ELSE sampled.rgb END,
         ''::bytea ORDER BY sampled.ordinal
     )
-    FROM doom._sample_render_rows(p_level_id, p_spans, p_center_y, p_span_packet) AS sampled
+    FROM doom._sample_render_rows(p_level_id, p_spans, p_center_y, p_span_packet, p_column_major) AS sampled
 );
 
 CREATE FUNCTION doom._render_change_count(p_level_id bigint, p_spans doom._render_span[])
