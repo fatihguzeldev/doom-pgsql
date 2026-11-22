@@ -292,4 +292,21 @@ if [ "$resumed" != "$(printf '%s\n' t t)" ]; then
     exit 1
 fi
 
-printf 'Concurrent ticks, SQL edits, contacts, gates, shots and pursuit checks passed.\n'
+# A tick waiting on completion observes the finished game without advancing it.
+db -c "INSERT INTO doom.level_exits (level_id, sector_id) VALUES ($level_id, 1)"
+finish_tick=$(db -c "SELECT tick_number + 1 FROM doom.games WHERE game_id = $game_id")
+finish_x=$(db -c "SELECT x FROM doom.actors WHERE game_id = $game_id AND kind = 'player'")
+start_owner "SELECT doom.tick($game_id, p_ticks => 6)"
+PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id, p_forward => 1, p_ticks => 6)" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+finish_peers
+finished=$(db -c "SELECT game.tick_number, game.finished_at_tick, player.x
+    FROM doom.games AS game JOIN doom.actors AS player USING (game_id)
+    WHERE game.game_id = $game_id AND player.kind = 'player'")
+if [ "$finished" != "$finish_tick|$finish_tick|$finish_x" ] || [ "$(cat "$scratch/tick.log")" != "$finish_tick" ]; then
+    printf 'expected both ticks to stop at finish tic %s, observed %s\n' "$finish_tick" "$finished" >&2
+    exit 1
+fi
+
+printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit and completion checks passed.\n'
