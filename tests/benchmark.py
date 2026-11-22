@@ -13,6 +13,9 @@ from statistics import mean, median
 from time import perf_counter
 
 
+COMPACT_MODES = {"render_compact", "step_compact"}
+
+
 def libpq():
     library = ctypes.util.find_library("pq")
     if library is None:
@@ -31,6 +34,7 @@ def libpq():
         "PQresultErrorMessage": (string, pointer),
         "PQntuples": (integer, pointer),
         "PQgetlength": (integer, pointer, integer, integer),
+        "PQgetvalue": (pointer, pointer, integer, integer),
         "PQclear": (None, pointer),
     }
     for name, (result, *args) in signatures.items():
@@ -56,16 +60,20 @@ def measure(args, connection_options=b""):
     width = str(args.width).encode()
     height = str(args.height).encode()
     ticks = str(args.ticks).encode()
+    rgb_bytes = args.width * args.height * 3
     fire = b", p_fire => true" if args.fire else b""
     queries = {
         "noop": (b"SELECT 1", lambda _: [], 4),
         "tick": (b"SELECT doom.tick($1, $2, 0, 0, $3" + fire + b")", lambda axis: [game, axis, ticks], 8),
-        "render": (b"SELECT doom.render($1, $2, $3)", lambda _: [game, width, height], args.width * args.height * 3),
+        "render": (b"SELECT doom.render($1, $2, $3)", lambda _: [game, width, height], rgb_bytes),
         "render_spans": (b"SELECT doom.render_spans($1, $2, $3)", lambda _: [game, width, height], None),
+        "render_compact": (b"SELECT doom.render_compact($1, $2, $3)", lambda _: [game, width, height], None),
         "step": (b"SELECT doom.step($1, $2, $3, $4, 0, 0, $5" + fire + b")",
-                 lambda axis: [game, width, height, axis, ticks], args.width * args.height * 3),
+                 lambda axis: [game, width, height, axis, ticks], rgb_bytes),
         "step_spans": (b"SELECT doom.step_spans($1, $2, $3, $4, 0, 0, $5" + fire + b")",
                        lambda axis: [game, width, height, axis, ticks], None),
+        "step_compact": (b"SELECT doom.step_compact($1, $2, $3, $4, 0, 0, $5" + fire + b")",
+                         lambda axis: [game, width, height, axis, ticks], None),
     }
     operations = ("tick", "render") if args.mode == "split" else (args.mode,)
     connection = lib.PQconnectdb(connection_options)
@@ -82,6 +90,7 @@ def measure(args, connection_options=b""):
 
         samples = []
         payload_sizes = []
+        encodings = {"rgb": 0, "spans": 0}
         elapsed = 0.0
         for i in range(args.warmup + args.samples):
             axis = b"0.125" if i % 2 == 0 else b"-0.125"
@@ -97,7 +106,20 @@ def measure(args, connection_options=b""):
                     if lib.PQntuples(result) != 1:
                         raise RuntimeError(f"{name} did not return one result row")
                     result_bytes = lib.PQgetlength(result, 0, 0)
-                    if size is None and (result_bytes == 0 or result_bytes % 7):
+                    if name in COMPACT_MODES:
+                        if result_bytes < 2:
+                            raise RuntimeError(f"{name} did not return a compact frame body")
+                        tag = C.c_ubyte.from_address(lib.PQgetvalue(result, 0, 0)).value
+                        body_bytes = result_bytes - 1
+                        if tag == 0 and body_bytes == rgb_bytes:
+                            encoding = "rgb"
+                        elif tag == 1 and body_bytes < rgb_bytes and body_bytes % 7 == 0:
+                            encoding = "spans"
+                        else:
+                            raise RuntimeError(f"{name} returned an invalid compact frame")
+                        if i >= args.warmup:
+                            encodings[encoding] += 1
+                    elif size is None and (result_bytes == 0 or result_bytes % 7):
                         raise RuntimeError(f"{name} did not return a nonempty sequence of 7-byte RGB changes")
                     if size is not None and result_bytes != size:
                         raise RuntimeError(f"{name} did not return the expected {size}-byte result")
@@ -110,7 +132,7 @@ def measure(args, connection_options=b""):
                 samples.append(duration * 1000)
                 payload_sizes.append(sample_bytes)
 
-        return {
+        summary = {
             "mode": args.mode,
             "fire": args.fire,
             "samples": args.samples,
@@ -122,13 +144,17 @@ def measure(args, connection_options=b""):
             "p95_ms": round(sorted(samples)[math.ceil(0.95 * len(samples)) - 1], 3),
             "samples_per_second": round(len(samples) / elapsed, 3),
         }
+        if args.mode in COMPACT_MODES:
+            summary["encodings"] = encodings
+        return summary
     finally:
         lib.PQfinish(connection)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("noop", "tick", "render", "render_spans", "step", "step_spans", "split"))
+    parser.add_argument("mode", choices=("noop", "tick", "render", "render_spans", "render_compact",
+                                         "step", "step_spans", "step_compact", "split"))
     parser.add_argument("--game", type=int, default=1)
     parser.add_argument("--width", type=int, default=320)
     parser.add_argument("--height", type=int, default=200)
@@ -141,7 +167,7 @@ def main():
     args = parser.parse_args()
     if args.warmup < 0 or min(args.samples, args.width, args.height, args.ticks) < 1:
         parser.error("sample count, width, height and tick count must be positive")
-    if args.fire and args.mode not in {"tick", "step", "step_spans", "split"}:
+    if args.fire and args.mode not in {"tick", "step", "step_spans", "step_compact", "split"}:
         parser.error("--fire requires a simulation mode")
     if args.mbps is not None:
         if args.mbps <= 0 or not math.isfinite(args.mbps):
