@@ -6,6 +6,29 @@ RETURN (
     FROM (VALUES (doom.wad_name(p_field))) AS decoded(name)
 );
 
+CREATE TABLE doom.wad_line_actions (
+    level_id bigint NOT NULL,
+    line_id integer NOT NULL,
+    special integer NOT NULL CHECK (special BETWEEN 0 AND 65535),
+    tag integer NOT NULL CHECK (tag BETWEEN 0 AND 65535),
+    CHECK (special <> 0 OR tag <> 0),
+    PRIMARY KEY (level_id, line_id),
+    FOREIGN KEY (level_id, line_id) REFERENCES doom.lines ON DELETE CASCADE
+);
+
+CREATE TABLE doom.wad_sector_properties (
+    level_id bigint NOT NULL,
+    sector_id integer NOT NULL,
+    special integer NOT NULL CHECK (special BETWEEN 0 AND 65535),
+    tag integer NOT NULL CHECK (tag BETWEEN 0 AND 65535),
+    CHECK (special <> 0 OR tag <> 0),
+    PRIMARY KEY (level_id, sector_id),
+    FOREIGN KEY (level_id, sector_id) REFERENCES doom.sectors ON DELETE CASCADE
+);
+
+CREATE INDEX wad_sector_properties_tag ON doom.wad_sector_properties (level_id, tag)
+WHERE tag <> 0;
+
 CREATE FUNCTION doom.import_wad_level(p_wad bytea, p_level_name text)
 RETURNS bigint
 LANGUAGE plpgsql STRICT
@@ -117,6 +140,15 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
+    INSERT INTO doom.wad_sector_properties (level_id, sector_id, special, tag)
+    SELECT imported_level_id, sector.sector_id, properties.special, properties.tag
+    FROM generate_series(0, sector_count - 1) AS sector(sector_id)
+    CROSS JOIN LATERAL (
+        SELECT doom.wad_u16(sector_data, 26 * sector.sector_id + 22) AS special,
+               doom.wad_u16(sector_data, 26 * sector.sector_id + 24) AS tag
+    ) AS properties
+    WHERE properties.special <> 0 OR properties.tag <> 0;
+
     WITH decoded AS MATERIALIZED (
         SELECT line_id, doom.wad_u16(line_data, 14 * line_id) AS first_vertex,
                doom.wad_u16(line_data, 14 * line_id + 2) AS second_vertex,
@@ -144,6 +176,15 @@ BEGIN
         RAISE EXCEPTION 'invalid linedef indices or identical endpoints in WAD map %', level_name
             USING ERRCODE = '22023';
     END IF;
+
+    INSERT INTO doom.wad_line_actions (level_id, line_id, special, tag)
+    SELECT imported_level_id, line.line_id, action.special, action.tag
+    FROM generate_series(0, line_count - 1) AS line(line_id)
+    CROSS JOIN LATERAL (
+        SELECT doom.wad_u16(line_data, 14 * line.line_id + 6) AS special,
+               doom.wad_u16(line_data, 14 * line.line_id + 8) AS tag
+    ) AS action
+    WHERE action.special <> 0 OR action.tag <> 0;
 
     INSERT INTO doom.line_surfaces (level_id, line_id, is_back, x_offset, y_offset,
                                     upper_material, lower_material, middle_material)

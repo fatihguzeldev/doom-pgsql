@@ -6,7 +6,7 @@ DECLARE
         '50574144 0b000000 d6000000' ||
         -- LINEDEFS at byte 12
         '0000 0100 0100 0000 0000 0000 ffff' ||
-        '0100 0200 0400 0000 0000 0100 0200' ||
+        '0100 0200 0400 0180 3412 0100 0200' ||
         -- SIDEDEFS at byte 40
         'f8ff 1100 2d00000000000000 0000000000000000 6d69645f61000000 0000' ||
         '0000 fdff 75705f6200000000 6c6f775f62000000 2d00000000000000 0100' ||
@@ -15,7 +15,7 @@ DECLARE
         'c0ff e0ff 4000 e0ff 4000 4000' ||
         -- SECTORS at byte 142
         'f0ff 6000 666c6f6f725f6100 2d00000000000000 8000 0000 0000' ||
-        '0800 7000 2020202020202020 4345494c5f420000 c000 0000 0000' ||
+        '0800 7000 2020202020202020 4345494c5f420000 c000 0180 ffff' ||
         -- THINGS at byte 194
         'e0ff f0ff 0e01 0100 0780' ||
         '0f00 0080 d3ff 23c1 ffff' ||
@@ -37,6 +37,8 @@ DECLARE
     empty_level bigint;
     sector_rows integer[];
     line_rows integer[];
+    line_actions integer[];
+    sector_properties integer[];
     sector_materials text[];
     line_surfaces text[];
     thing_rows integer[];
@@ -66,6 +68,20 @@ BEGIN
         [1, 64, -32, 64, 64, 1, 0, 0]
     ] THEN
         RAISE EXCEPTION 'incorrect imported lines: %', line_rows;
+    END IF;
+
+    SELECT array_agg(ARRAY[line_id, special, tag] ORDER BY line_id)
+    INTO line_actions
+    FROM doom.wad_line_actions WHERE level_id = imported_level;
+    IF line_actions IS DISTINCT FROM ARRAY[[1, 32769, 4660]] THEN
+        RAISE EXCEPTION 'incorrect imported line actions: %', line_actions;
+    END IF;
+
+    SELECT array_agg(ARRAY[sector_id, special, tag] ORDER BY sector_id)
+    INTO sector_properties
+    FROM doom.wad_sector_properties WHERE level_id = imported_level;
+    IF sector_properties IS DISTINCT FROM ARRAY[[1, 32769, 65535]] THEN
+        RAISE EXCEPTION 'incorrect imported sector properties: %', sector_properties;
     END IF;
 
     SELECT array_agg(ARRAY[floor_material, ceiling_material] ORDER BY sector_id)
