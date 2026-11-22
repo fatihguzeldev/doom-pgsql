@@ -9,11 +9,14 @@ CREATE TABLE doom._flat_atlas (
     PRIMARY KEY (level_id, name, mip, du, dv, page)
 );
 
-CREATE FUNCTION doom._flat_atlas_key(
+-- Prepare the orbit direction once per draw, then re-anchor each eight-byte chunk.
+-- A draw with no representable orbit receives one direct-sample chunk.
+CREATE FUNCTION doom._flat_atlas_chunks(
     p_width integer, p_u double precision, p_v double precision,
-    p_du double precision, p_dv double precision
-) RETURNS TABLE(mip integer, dir_u integer, dir_v integer, page integer, first_byte integer)
-LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE ROWS 1 AS $$
+    p_du double precision, p_dv double precision, p_length integer
+) RETURNS TABLE (
+    i integer, sample_count integer, mip integer, dir_u integer, dir_v integer, page integer, first_byte integer
+) LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE ROWS 12 AS $$
 DECLARE
     scale integer := 1;
     grid integer;
@@ -30,49 +33,75 @@ DECLARE
     phase integer;
     orbit integer;
     stride integer;
+    swapped boolean;
 BEGIN
+    i := 0;
+    sample_count := p_length;
     IF p_width NOT BETWEEN 4 AND 64 OR (p_width & (p_width - 1)) <> 0
         OR NOT (abs(p_u) < 1e15 AND abs(p_v) < 1e15)
     THEN
+        RETURN NEXT;
         RETURN;
     END IF;
     WHILE greatest(abs(p_du), abs(p_dv)) > scale LOOP
         scale := scale * 2;
         IF scale > p_width THEN
+            RETURN NEXT;
             RETURN;
         END IF;
     END LOOP;
-    mip := p_width / scale;
-    grid := 4 * mip;
-    -- Floor anchors preserve lower texel ownership at a cell boundary.
-    u := floor(p_u * 4 / scale)::bigint & (grid - 1);
-    v := floor(p_v * 4 / scale)::bigint & (grid - 1);
     a := round(p_du * 4 / scale)::integer;
     b := round(p_dv * 4 / scale)::integer;
     IF a = 0 AND b = 0 THEN
+        RETURN NEXT;
         RETURN;
     END IF;
+
+    mip := p_width / scale;
+    grid := 4 * mip;
     dir_u := a;
     dir_v := b;
     divisor := gcd(grid, gcd(a, b));
     period := grid / divisor;
     mask := period - 1;
-    major := a / divisor;
-    minor := b / divisor;
-    IF (major & 1) = 0 THEN
-        SELECT v, u, minor, major INTO u, v, major, minor;
-    END IF;
+    swapped := ((a / divisor) & 1) = 0;
+    major := CASE WHEN swapped THEN b ELSE a END / divisor;
+    minor := CASE WHEN swapped THEN a ELSE b END / divisor;
     -- The odd component is ±1 or ±3. Invert it in the power-of-two period.
     inverse := CASE abs(major) WHEN 1 THEN 1
         ELSE (period * (1 + (period % 3 = 1)::integer) + 1) / 3 END;
-    phase := (inverse * sign(major)::integer * (u / divisor)) & mask;
-    orbit := ((u % divisor) * divisor + v % divisor) * period
-        + (((v / divisor) - phase * minor) & mask);
+    inverse := inverse * sign(major)::integer;
     stride := greatest(2 * period, 16);
-    page := orbit / (2048 / stride);
-    first_byte := (orbit % (2048 / stride)) * stride + phase + 1;
-    RETURN NEXT;
+
+    WHILE i < p_length LOOP
+        -- Floor anchors preserve lower texel ownership at a cell boundary.
+        IF swapped THEN
+            u := floor((p_v + i*p_dv) * 4 / scale)::bigint & (grid - 1);
+            v := floor((p_u + i*p_du) * 4 / scale)::bigint & (grid - 1);
+        ELSE
+            u := floor((p_u + i*p_du) * 4 / scale)::bigint & (grid - 1);
+            v := floor((p_v + i*p_dv) * 4 / scale)::bigint & (grid - 1);
+        END IF;
+        phase := (inverse * (u / divisor)) & mask;
+        orbit := ((u % divisor) * divisor + v % divisor) * period
+            + (((v / divisor) - phase * minor) & mask);
+        page := orbit / (2048 / stride);
+        first_byte := (orbit % (2048 / stride)) * stride + phase + 1;
+        sample_count := least(8,p_length - i);
+        RETURN NEXT;
+        i := i + 8;
+    END LOOP;
 END;
+$$;
+
+CREATE FUNCTION doom._flat_atlas_key(
+    p_width integer, p_u double precision, p_v double precision,
+    p_du double precision, p_dv double precision
+) RETURNS TABLE(mip integer, dir_u integer, dir_v integer, page integer, first_byte integer)
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE ROWS 1 AS $$
+    SELECT chunk.mip,chunk.dir_u,chunk.dir_v,chunk.page,chunk.first_byte
+    FROM doom._flat_atlas_chunks(p_width,p_u,p_v,p_du,p_dv,1) AS chunk
+    WHERE chunk.mip IS NOT NULL;
 $$;
 
 CREATE FUNCTION doom._compile_flat_atlas(p_level_id bigint)
