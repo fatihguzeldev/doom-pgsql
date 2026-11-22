@@ -128,7 +128,7 @@ BEGIN
         RAISE EXCEPTION 'game % has no player camera', p_game_id USING ERRCODE = 'P0002';
     END IF;
 
-    eye_z := camera.z + 41;
+    eye_z := doom._eye_z(camera.z);
     forward_x := cos(camera.angle);
     forward_y := sin(camera.angle);
     focal := p_width * 0.5;

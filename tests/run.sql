@@ -13,6 +13,7 @@
 \ir body_collision.sql
 \ir actor_collision.sql
 \ir gates.sql
+\ir fire.sql
 \ir renderer.sql
 \ir render_materials.sql
 \ir render_masks.sql

@@ -61,6 +61,8 @@ CREATE TABLE doom.actor_types (
     height double precision NOT NULL DEFAULT 56 CHECK (height > 0 AND height < 'Infinity'),
     color integer NOT NULL DEFAULT 13342040 CHECK (color BETWEEN 0 AND 16777215),
     blocks_actors boolean NOT NULL DEFAULT true,
+    attack_range integer NOT NULL DEFAULT 0 CHECK (attack_range >= 0),
+    attack_damage integer NOT NULL DEFAULT 0 CHECK (attack_damage >= 0),
     sprite_material text CHECK (sprite_material <> ''),
     dead_sprite_material text CHECK (dead_sprite_material <> ''),
     sprite_frames text[] NOT NULL DEFAULT '{}' CHECK (
@@ -77,7 +79,13 @@ CREATE TABLE doom.actor_types (
     dead_sprite_frame_ticks integer NOT NULL DEFAULT 1 CHECK (dead_sprite_frame_ticks > 0)
 );
 
-INSERT INTO doom.actor_types (kind, default_health) VALUES ('player', 100);
+INSERT INTO doom.actor_types (kind, default_health, attack_range, attack_damage)
+VALUES ('player', 100, 512, 20);
+
+CREATE FUNCTION doom._eye_z(p_feet_z double precision)
+RETURNS double precision
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN p_feet_z + 41;
 
 CREATE TABLE doom.actors (
     game_id bigint NOT NULL,

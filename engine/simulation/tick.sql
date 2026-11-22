@@ -17,7 +17,8 @@ $$;
 
 CREATE FUNCTION doom.tick(
     p_game_id bigint, p_forward double precision DEFAULT 0, p_strafe double precision DEFAULT 0,
-    p_turn double precision DEFAULT 0, p_ticks integer DEFAULT 1, p_use boolean DEFAULT false
+    p_turn double precision DEFAULT 0, p_ticks integer DEFAULT 1, p_use boolean DEFAULT false,
+    p_fire boolean DEFAULT false
 )
 RETURNS bigint
 LANGUAGE plpgsql
@@ -34,7 +35,7 @@ DECLARE
     camera_sin double precision;
 BEGIN
     IF p_ticks IS NULL OR p_ticks NOT BETWEEN 1 AND 128
-        OR p_use IS NULL
+        OR p_use IS NULL OR p_fire IS NULL
         OR p_forward IS NULL OR abs(p_forward) > 1
         OR p_strafe IS NULL OR abs(p_strafe) > 1
         OR p_turn IS NULL OR abs(p_turn) > pi()
@@ -50,11 +51,11 @@ BEGIN
 
     -- A tick that waited for this game can now see motions queued by its predecessor.
     SELECT EXISTS (SELECT FROM doom.ceiling_motions WHERE game_id = p_game_id) INTO has_motion;
-    IF NOT controls_player AND NOT p_use AND NOT has_motion THEN
+    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion THEN
         RETURN new_tick;
     END IF;
 
-    IF controls_player OR p_use THEN
+    IF controls_player OR p_use OR p_fire THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
@@ -80,6 +81,9 @@ BEGIN
         END IF;
         IF has_motion THEN
             has_motion := doom._advance_gates(p_game_id, player);
+        END IF;
+        IF tic = 1 AND p_fire AND player.life_state = 'alive' THEN
+            PERFORM doom._fire_actor(player, new_tick - p_ticks + 1);
         END IF;
         IF speed IS NOT NULL THEN
             camera_cos := cos(player.angle);

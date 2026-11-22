@@ -17,6 +17,9 @@ CREATE SCHEMA doom;
 \ir engine/simulation/actor_collision.sql
 \ir engine/simulation/gates.sql
 \ir engine/simulation/gate_use.sql
+\ir engine/simulation/ray.sql
+\ir engine/simulation/ray_targets.sql
+\ir engine/simulation/fire.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql
