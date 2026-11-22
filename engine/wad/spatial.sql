@@ -238,7 +238,6 @@ DECLARE
 BEGIN
     IF NOT (p_xmin BETWEEN -32768 AND p_xmax AND p_xmax <= 32767
             AND p_ymin BETWEEN -32768 AND p_ymax AND p_ymax <= 32767)
-        OR NOT EXISTS (SELECT FROM doom.wad_bsp WHERE level_id = p_level_id AND has_line_grid)
     THEN
         RETURN NULL;
     END IF;
@@ -250,16 +249,22 @@ BEGIN
         RETURN NULL;
     END IF;
     IF first_block_x = last_block_x AND first_block_y = last_block_y THEN
-        SELECT block.line_ids INTO candidates
-        FROM doom.wad_line_blocks AS block
-        WHERE block.level_id = p_level_id AND block.block_x = first_block_x AND block.block_y = first_block_y;
+        SELECT coalesce(block.line_ids, '{}') INTO candidates
+        FROM doom.wad_bsp AS bsp
+        LEFT JOIN doom.wad_line_blocks AS block ON block.level_id = bsp.level_id
+            AND block.block_x = first_block_x AND block.block_y = first_block_y
+        WHERE bsp.level_id = p_level_id AND bsp.has_line_grid;
     ELSE
-        SELECT array_agg(DISTINCT line.id ORDER BY line.id) INTO candidates
-        FROM doom.wad_line_blocks AS block
-        CROSS JOIN LATERAL unnest(block.line_ids) AS line(id)
-        WHERE block.level_id = p_level_id AND block.block_x BETWEEN first_block_x AND last_block_x
-          AND block.block_y BETWEEN first_block_y AND last_block_y;
+        SELECT coalesce((
+            SELECT array_agg(DISTINCT line.id ORDER BY line.id)
+            FROM doom.wad_line_blocks AS block
+            CROSS JOIN LATERAL unnest(block.line_ids) AS line(id)
+            WHERE block.level_id = p_level_id AND block.block_x BETWEEN first_block_x AND last_block_x
+              AND block.block_y BETWEEN first_block_y AND last_block_y
+        ), '{}') INTO candidates
+        FROM doom.wad_bsp AS bsp
+        WHERE bsp.level_id = p_level_id AND bsp.has_line_grid;
     END IF;
-    RETURN coalesce(candidates, '{}'::integer[]);
+    RETURN candidates;
 END;
 $$;
