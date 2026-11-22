@@ -199,24 +199,32 @@ DECLARE
     pickup record;
 BEGIN
     FOR pickup IN
-        SELECT candidate.actor_id, candidate.sector_id, candidate.x, candidate.y, candidate.z,
-               item.item_kind, item.amount
-        FROM doom.wad_item_pickups AS item
+        WITH pickup_reach AS MATERIALIZED (
+            SELECT p_radius + max(kind.radius) AS reach
+            FROM doom.wad_item_pickups AS item JOIN doom.actor_types AS kind USING (kind)
+        ), nearby AS MATERIALIZED (
+            SELECT actor.actor_id
+            FROM doom.actors AS actor
+            CROSS JOIN pickup_reach AS bound
+            WHERE actor.game_id = p_player.game_id AND actor.life_state = 'alive'
+              AND actor.collision_x_bucket BETWEEN floor(floor(p_player.x - bound.reach) / 64)
+                AND floor(floor(p_player.x + bound.reach) / 64)
+              AND actor.x BETWEEN p_player.x - bound.reach AND p_player.x + bound.reach
+              AND actor.y BETWEEN p_player.y - bound.reach AND p_player.y + bound.reach
+        )
+        SELECT actor.actor_id, actor.sector_id, actor.x, actor.y, actor.z, item.item_kind, item.amount
+        FROM nearby
+        JOIN doom.actors AS actor ON actor.game_id = p_player.game_id AND actor.actor_id = nearby.actor_id
+        JOIN doom.wad_item_pickups AS item USING (kind)
         JOIN doom.actor_types AS kind USING (kind)
         CROSS JOIN LATERAL (SELECT p_radius + kind.radius AS reach) AS contact
-        CROSS JOIN LATERAL (
-            SELECT actor.actor_id, actor.sector_id, actor.x, actor.y, actor.z
-            FROM doom.actors AS actor
-            WHERE actor.game_id = p_player.game_id AND actor.kind = item.kind AND actor.life_state = 'alive'
-              AND actor.collision_x_bucket BETWEEN floor(floor(p_player.x - contact.reach) / 64)
-                AND floor(floor(p_player.x + contact.reach) / 64)
-              AND actor.x BETWEEN p_player.x - contact.reach AND p_player.x + contact.reach
-              AND actor.y BETWEEN p_player.y - contact.reach AND p_player.y + contact.reach
-              AND actor.z < p_player.z + p_height AND actor.z + kind.height > p_player.z
-              AND (point(actor.x, actor.y) <-> point(p_player.x, p_player.y)) <= contact.reach
-            FOR UPDATE OF actor SKIP LOCKED
-        ) AS candidate
-        ORDER BY candidate.actor_id
+        WHERE actor.life_state = 'alive'
+          AND actor.x BETWEEN p_player.x - contact.reach AND p_player.x + contact.reach
+          AND actor.y BETWEEN p_player.y - contact.reach AND p_player.y + contact.reach
+          AND actor.z < p_player.z + p_height AND actor.z + kind.height > p_player.z
+          AND (point(actor.x, actor.y) <-> point(p_player.x, p_player.y)) <= contact.reach
+        ORDER BY actor.actor_id
+        FOR UPDATE OF actor SKIP LOCKED
     LOOP
         -- A hand can reach across an open lip that a standing actor cannot climb.
         IF (pickup.sector_id = p_player.sector_id AND abs(pickup.x - p_player.x) < 0.00000001
