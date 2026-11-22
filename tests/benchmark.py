@@ -56,14 +56,15 @@ def measure(args, connection_options=b""):
     width = str(args.width).encode()
     height = str(args.height).encode()
     ticks = str(args.ticks).encode()
+    fire = b", p_fire => true" if args.fire else b""
     queries = {
         "noop": (b"SELECT 1", lambda _: [], 4),
-        "tick": (b"SELECT doom.tick($1, $2, 0, 0, $3)", lambda axis: [game, axis, ticks], 8),
+        "tick": (b"SELECT doom.tick($1, $2, 0, 0, $3" + fire + b")", lambda axis: [game, axis, ticks], 8),
         "render": (b"SELECT doom.render($1, $2, $3)", lambda _: [game, width, height], args.width * args.height * 3),
         "render_spans": (b"SELECT doom.render_spans($1, $2, $3)", lambda _: [game, width, height], None),
-        "step": (b"SELECT doom.step($1, $2, $3, $4, 0, 0, $5)",
+        "step": (b"SELECT doom.step($1, $2, $3, $4, 0, 0, $5" + fire + b")",
                  lambda axis: [game, width, height, axis, ticks], args.width * args.height * 3),
-        "step_spans": (b"SELECT doom.step_spans($1, $2, $3, $4, 0, 0, $5)",
+        "step_spans": (b"SELECT doom.step_spans($1, $2, $3, $4, 0, 0, $5" + fire + b")",
                        lambda axis: [game, width, height, axis, ticks], None),
     }
     operations = ("tick", "render") if args.mode == "split" else (args.mode,)
@@ -111,6 +112,7 @@ def measure(args, connection_options=b""):
 
         return {
             "mode": args.mode,
+            "fire": args.fire,
             "samples": args.samples,
             "added_rtt_ms": args.rtt_ms,
             "bandwidth_mbps": args.mbps,
@@ -133,11 +135,14 @@ def main():
     parser.add_argument("--ticks", type=int, default=1)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--samples", type=int, default=100)
+    parser.add_argument("--fire", action="store_true", help="fire once per simulation request")
     parser.add_argument("--rtt-ms", type=float, help="add this TCP round-trip delay using the local proxy")
     parser.add_argument("--mbps", type=float, help="limit TCP throughput in each direction using the local proxy")
     args = parser.parse_args()
     if args.warmup < 0 or min(args.samples, args.width, args.height, args.ticks) < 1:
         parser.error("sample count, width, height and tick count must be positive")
+    if args.fire and args.mode not in {"tick", "step", "step_spans", "split"}:
+        parser.error("--fire requires a simulation mode")
     if args.mbps is not None:
         if args.mbps <= 0 or not math.isfinite(args.mbps):
             parser.error("bandwidth must be finite and positive")
