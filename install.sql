@@ -8,4 +8,5 @@ CREATE SCHEMA doom;
 \ir engine/simulation/movement.sql
 \ir engine/simulation/tick.sql
 \ir engine/renderer/render.sql
+\ir engine/step.sql
 COMMIT;
