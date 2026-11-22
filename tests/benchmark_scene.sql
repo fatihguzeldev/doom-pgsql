@@ -19,6 +19,15 @@
 \if :masked
     \set textured true
 \endif
+\if :{?sprites}
+\else
+    \set sprites false
+\endif
+\if :sprites
+    \set actor_kind 'benchmark sprite'
+\else
+    \set actor_kind 'benchmark pylon'
+\endif
 
 BEGIN;
 INSERT INTO doom.levels (name) VALUES ('benchmark corridor') RETURNING level_id \gset
@@ -39,13 +48,14 @@ CROSS JOIN LATERAL (VALUES
         CASE WHEN room < :rooms - 1 THEN room + 1 END)
 ) AS wall(ordinal, x1, y1, x2, y2, neighbor);
 
-\if :textured
-    INSERT INTO doom.level_palettes (level_id, palette)
-    SELECT :level_id, string_agg(decode(lpad(to_hex(
-        ((entry * 11 % 256) << 16) | ((entry * 7 % 256) << 8) | (entry * 3 % 256)
-    ), 6, '0'), 'hex'), ''::bytea ORDER BY entry)
-    FROM generate_series(0, 255) AS entry;
+INSERT INTO doom.level_palettes (level_id, palette)
+SELECT :level_id, string_agg(decode(lpad(to_hex(
+    ((entry * 11 % 256) << 16) | ((entry * 7 % 256) << 8) | (entry * 3 % 256)
+), 6, '0'), 'hex'), ''::bytea ORDER BY entry)
+FROM generate_series(0, 255) AS entry
+HAVING :'textured'::boolean OR :'sprites'::boolean;
 
+\if :textured
     INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height, pixels, coverage)
     SELECT :level_id, material.kind, material.name, 64, 64,
            string_agg(decode(lpad(to_hex((x * 5 + y * 7 + material.color_offset) % 256), 2, '0'), 'hex'),
@@ -78,15 +88,26 @@ CROSS JOIN LATERAL (VALUES
     WHERE line.level_id = :level_id AND (NOT side.is_back OR line.back_sector_id IS NOT NULL);
 \endif
 
+\if :sprites
+    INSERT INTO doom.level_materials (level_id, surface_kind, name, width, height,
+                                      left_offset, top_offset, pixels, coverage)
+    SELECT :level_id, 'sprite', 'BENCHSP', 14, 38, 7, 38,
+           string_agg(decode(lpad(to_hex((x * 11 + y * 5) % 256), 2, '0'), 'hex'), ''::bytea ORDER BY x, y),
+           string_agg(CASE WHEN (x + y / 4) % 4 < 3 THEN '\xff'::bytea ELSE '\x00'::bytea END,
+                      ''::bytea ORDER BY x, y)
+    FROM generate_series(0, 13) AS x
+    CROSS JOIN generate_series(0, 37) AS y;
+\endif
+
 SELECT doom.start_game(:level_id, 0, 32, 0) AS game_id \gset
 
-INSERT INTO doom.actor_types (kind, default_health, radius, height, color)
-SELECT 'benchmark pylon', 20, 7, 38, 14449480
+INSERT INTO doom.actor_types (kind, default_health, radius, height, color, sprite_material)
+SELECT :'actor_kind', 20, 7, 38, 14449480, CASE WHEN :'sprites'::boolean THEN 'BENCHSP' END
 WHERE :actors > 0
 ON CONFLICT (kind) DO NOTHING;
 
 INSERT INTO doom.actors (game_id, sector_id, kind, x, y)
-SELECT :game_id, (actor_id - 1) % :rooms, 'benchmark pylon',
+SELECT :game_id, (actor_id - 1) % :rooms, :'actor_kind',
        ((actor_id - 1) % :rooms) * 128 + 48 + (actor_id * 17) % 64,
        (actor_id * 37) % 71 - 35
 FROM generate_series(1, :actors) AS actor(actor_id);
