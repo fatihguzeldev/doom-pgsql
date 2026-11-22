@@ -41,6 +41,8 @@ CREATE TABLE doom.lines (
 
 CREATE INDEX lines_front_sector ON doom.lines (level_id, front_sector_id);
 CREATE INDEX lines_back_sector ON doom.lines (level_id, back_sector_id);
+CREATE INDEX lines_sector_lookup ON doom.lines USING gist (box(point(x1, y1), point(x2, y2)))
+WHERE y1 <> y2;
 
 CREATE TABLE doom.games (
     game_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -129,6 +131,10 @@ RETURN (
     FROM doom.lines AS line
     CROSS JOIN LATERAL (VALUES (line.front_sector_id), (line.back_sector_id)) AS side(sector_id)
     WHERE line.level_id = p_level_id
+      AND line.y1 <> line.y2
+      -- Leave room for an interpolated crossing to round past its bounding box.
+      AND box(point(line.x1, line.y1), point(line.x2, line.y2))
+          && box(point(p_x - 1, p_y), point(2147483647, p_y))
       AND side.sector_id IS NOT NULL
       AND CASE WHEN (line.y1 > p_y) <> (line.y2 > p_y) THEN
             p_x < line.x1 + (p_y - line.y1) * (line.x2::double precision - line.x1)
