@@ -99,7 +99,7 @@ WITH definitions (type_code, behavior, sprite, dead_sprite, item, amount) AS (
            CASE behavior WHEN 'guard' THEN 20 WHEN 'shooter' THEN 35 WHEN 'striker' THEN 45
                WHEN 'brawler' THEN 60 WHEN 'heavy' THEN 180 WHEN 'breakable' THEN 20 ELSE 1 END,
            CASE WHEN behavior = 'heavy' THEN 22 WHEN hostile THEN 15
-                WHEN behavior IN ('obstacle', 'breakable') THEN 10 ELSE 6 END,
+                WHEN behavior IN ('obstacle', 'breakable') THEN 10 WHEN behavior = 'item' THEN 20 ELSE 6 END,
            CASE WHEN behavior = 'heavy' THEN 64 WHEN hostile THEN 56
                 WHEN behavior = 'obstacle' THEN 48 WHEN behavior = 'breakable' THEN 32 ELSE 12 END,
            CASE WHEN hostile THEN 11425872 WHEN behavior = 'health' THEN 5610218
@@ -197,18 +197,17 @@ LANGUAGE plpgsql STRICT
 AS $$
 DECLARE
     pickup record;
-    reached doom.actors;
 BEGIN
     FOR pickup IN
-        SELECT candidate.actor_id, candidate.x, candidate.y, item.item_kind, item.amount
+        SELECT candidate.actor_id, candidate.sector_id, candidate.x, candidate.y, candidate.z,
+               item.item_kind, item.amount
         FROM doom.wad_item_pickups AS item
         JOIN doom.actor_types AS kind USING (kind)
         CROSS JOIN LATERAL (SELECT p_radius + kind.radius AS reach) AS contact
         CROSS JOIN LATERAL (
-            SELECT actor.actor_id, actor.x, actor.y
+            SELECT actor.actor_id, actor.sector_id, actor.x, actor.y, actor.z
             FROM doom.actors AS actor
             WHERE actor.game_id = p_player.game_id AND actor.kind = item.kind AND actor.life_state = 'alive'
-              AND actor.sector_id = p_player.sector_id
               AND actor.collision_x_bucket BETWEEN floor(floor(p_player.x - contact.reach) / 64)
                 AND floor(floor(p_player.x + contact.reach) / 64)
               AND actor.x BETWEEN p_player.x - contact.reach AND p_player.x + contact.reach
@@ -219,10 +218,14 @@ BEGIN
         ) AS candidate
         ORDER BY candidate.actor_id
     LOOP
-        reached := doom.move_actor(p_player, pickup.x - p_player.x, pickup.y - p_player.y, p_height, 0);
-        IF reached.sector_id = p_player.sector_id
-            AND abs(reached.x - pickup.x) < 0.000001 AND abs(reached.y - pickup.y) < 0.000001
-        THEN
+        -- A hand can reach across an open lip that a standing actor cannot climb.
+        IF (pickup.sector_id = p_player.sector_id AND abs(pickup.x - p_player.x) < 0.00000001
+                                               AND abs(pickup.y - p_player.y) < 0.00000001)
+            OR EXISTS (
+                SELECT FROM doom._ray_sectors(p_player, pickup.x - p_player.x, pickup.y - p_player.y,
+                                              greatest(p_player.z, pickup.z)) AS path
+                WHERE path.sector_id = pickup.sector_id AND path.end_t = 1 AND NOT path.end_blocked
+            ) THEN
             DELETE FROM doom.actors WHERE game_id = p_player.game_id AND actor_id = pickup.actor_id;
             IF FOUND THEN
                 IF pickup.item_kind IN ('key-blue', 'key-red', 'key-yellow') THEN

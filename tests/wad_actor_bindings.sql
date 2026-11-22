@@ -102,4 +102,35 @@ BEGIN
 END;
 $$;
 
+DO $$
+DECLARE
+    test_level bigint;
+    test_game bigint;
+BEGIN
+    INSERT INTO doom.levels (name, step_height) VALUES ('open pickup ledge', 24) RETURNING level_id INTO test_level;
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height)
+    VALUES (test_level, 0, 0, 96), (test_level, 1, 32, 96);
+    INSERT INTO doom.lines (level_id, line_id, x1, y1, x2, y2, front_sector_id, back_sector_id, blocking)
+    VALUES (test_level, 0, 64, 64, 64, 0, 0, 1, true);
+    test_game := doom.start_game(test_level, 0, 48, 32);
+    INSERT INTO doom.actors (game_id, sector_id, kind, x, y)
+    VALUES (test_game, 1, 'wad thing 5', 80, 32);
+
+    PERFORM doom.tick(test_game);
+    ASSERT NOT EXISTS (SELECT FROM doom.game_keys WHERE game_id = test_game), 'an opaque boundary blocks contact';
+
+    UPDATE doom.lines SET blocking = false WHERE level_id = test_level;
+    INSERT INTO doom.sector_state (game_id, level_id, sector_id, floor_height, ceiling_height)
+    VALUES (test_game, test_level, 1, 32, 32);
+    PERFORM doom.tick(test_game);
+    ASSERT NOT EXISTS (SELECT FROM doom.game_keys WHERE game_id = test_game), 'a shut portal blocks contact';
+
+    UPDATE doom.sector_state SET ceiling_height = 96 WHERE game_id = test_game AND sector_id = 1;
+    PERFORM doom.tick(test_game, p_forward => 1);
+    ASSERT (SELECT sector_id FROM doom.actors WHERE game_id = test_game AND kind = 'player') = 0
+       AND (SELECT key_kind FROM doom.game_keys WHERE game_id = test_game) = 'blue',
+        'a reachable raised item is collected even when the player cannot step up';
+END;
+$$;
+
 ROLLBACK;
