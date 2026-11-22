@@ -7,6 +7,7 @@
 \ir wad_textures.sql
 \ir wad_level_materials.sql
 \ir wad_sprites.sql
+\ir wad_actor_bindings.sql
 \ir simulation.sql
 \ir level_start.sql
 \ir level_exit.sql
