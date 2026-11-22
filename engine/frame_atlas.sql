@@ -13,7 +13,7 @@ CREATE FUNCTION doom._flat_atlas_key(
     p_width integer, p_u double precision, p_v double precision,
     p_du double precision, p_dv double precision
 ) RETURNS TABLE(mip integer, dir_u integer, dir_v integer, page integer, first_byte integer)
-LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
+LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE ROWS 1 AS $$
 DECLARE
     scale integer := 1;
     grid integer;
@@ -90,6 +90,11 @@ DECLARE
     minor integer;
     swapped boolean;
     stride integer;
+    texel_shift integer;
+    phase_mask integer;
+    mip_pixels bytea;
+    mip_transposed bytea;
+    sample_pixels bytea;
 BEGIN
     DELETE FROM doom._flat_atlas WHERE level_id = p_level_id;
     FOR asset IN
@@ -105,6 +110,15 @@ BEGIN
         WHILE mip > 0 LOOP
             scale := asset.width / mip;
             grid := mip * 4;
+            SELECT string_agg(substring(asset.pixels FROM 1 + sample.y * asset.width + sample.x FOR 1),
+                              ''::bytea ORDER BY sample.y, sample.x),
+                   string_agg(substring(asset.pixels FROM 1 + sample.y * asset.width + sample.x FOR 1),
+                              ''::bytea ORDER BY sample.x, sample.y)
+            INTO mip_pixels, mip_transposed
+            FROM generate_series(0, asset.width - 1, scale) AS sample_x(x)
+            CROSS JOIN generate_series(0, asset.width - 1, scale) AS sample_y(y)
+            CROSS JOIN LATERAL (SELECT sample_x.x, sample_y.y) AS sample;
+
             FOR a IN -4..4 LOOP
                 FOR b IN -4..4 LOOP
                     IF a = 0 AND b = 0 THEN
@@ -118,21 +132,51 @@ BEGIN
                     IF swapped THEN
                         SELECT minor, major INTO major, minor;
                     END IF;
+                    sample_pixels := CASE WHEN swapped THEN mip_transposed ELSE mip_pixels END;
+                    texel_shift := CASE divisor WHEN 4 THEN 0 WHEN 2 THEN 1 ELSE 2 END;
+                    phase_mask := period - 1;
                     stride := greatest(2 * period, 16);
                     INSERT INTO doom._flat_atlas (level_id, name, mip, du, dv, page, colors)
-                    SELECT p_level_id, asset.name, mip, a, b, orbit.n / (2048 / stride),
-                        string_agg(substring(asset.pixels FROM 1 +
-                            ((CASE WHEN swapped THEN sample.x ELSE sample.y END) / 4 * scale) * asset.width +
-                            ((CASE WHEN swapped THEN sample.y ELSE sample.x END) / 4 * scale) FOR 1),
-                            ''::bytea ORDER BY orbit.n, phase.n)
-                    FROM generate_series(0, grid * divisor - 1) AS orbit(n)
-                    CROSS JOIN generate_series(0, stride - 1) AS phase(n)
-                    CROSS JOIN LATERAL (
-                        SELECT (orbit.n / period / divisor) + ((phase.n * major) & (period - 1)) * divisor AS x,
-                            (orbit.n / period % divisor) + (((orbit.n % period) + phase.n * minor)
-                                & (period - 1)) * divisor AS y
-                    ) AS sample
-                    GROUP BY orbit.n / (2048 / stride);
+                    WITH cycles AS MATERIALIZED (
+                        -- Subtexel remainders below divisor cannot change a sampled texel.
+                        SELECT orbit.n,
+                               string_agg(CASE WHEN period < 4
+                                   THEN substring(sample_pixels FROM texel.i0 + 1 FOR 1)
+                                   -- Aggregate network-order words to emit four consecutive color bytes.
+                                   ELSE int4send(
+                                       (get_byte(sample_pixels, texel.i0) << 24)
+                                       | (get_byte(sample_pixels, texel.i1) << 16)
+                                       | (get_byte(sample_pixels, texel.i2) << 8)
+                                       | get_byte(sample_pixels, texel.i3)
+                                   ) END, ''::bytea ORDER BY phase.n) AS colors
+                        FROM generate_series(0, period - 1) AS orbit(n)
+                        CROSS JOIN generate_series(0, period - 1, CASE WHEN period < 4 THEN 1 ELSE 4 END) AS phase(n)
+                        CROSS JOIN LATERAL (
+                            SELECT phase.n * major AS x, orbit.n + phase.n * minor AS y
+                        ) AS step
+                        CROSS JOIN LATERAL (
+                            SELECT ((step.y & phase_mask) >> texel_shift) * mip
+                                       + ((step.x & phase_mask) >> texel_shift) AS i0,
+                                   (((step.y + minor) & phase_mask) >> texel_shift) * mip
+                                       + (((step.x + major) & phase_mask) >> texel_shift) AS i1,
+                                   (((step.y + 2 * minor) & phase_mask) >> texel_shift) * mip
+                                       + (((step.x + 2 * major) & phase_mask) >> texel_shift) AS i2,
+                                   (((step.y + 3 * minor) & phase_mask) >> texel_shift) * mip
+                                       + (((step.x + 3 * major) & phase_mask) >> texel_shift) AS i3
+                        ) AS texel
+                        GROUP BY orbit.n
+                    ), repeated AS MATERIALIZED (
+                        SELECT cycles.n, CASE WHEN stride = 2 * period THEN cycles.colors || cycles.colors
+                            ELSE decode(repeat(encode(cycles.colors, 'hex'), stride / period), 'hex')
+                            END AS colors
+                        FROM cycles
+                    )
+                    SELECT p_level_id, asset.name, mip, a, b, output.slot / (2048 / stride),
+                           string_agg(repeated.colors, ''::bytea ORDER BY output.slot)
+                    FROM repeated
+                    CROSS JOIN generate_series(0, divisor * divisor - 1) AS replica(n)
+                    CROSS JOIN LATERAL (SELECT replica.n * period + repeated.n AS slot) AS output
+                    GROUP BY output.slot / (2048 / stride);
                 END LOOP;
             END LOOP;
             mip := mip / 2;
