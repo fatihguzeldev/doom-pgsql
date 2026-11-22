@@ -81,11 +81,15 @@ start_owner() {
     wait_for_peer "$owner_app" ready
 }
 
-finish_peers() {
+finish_owner() {
     printf 'COMMIT;\n' >&3
     exec 3>&-
     wait "$owner_pid"
     owner_pid=
+}
+
+finish_peers() {
+    finish_owner
     wait "$tick_pid"
     tick_pid=
 }
@@ -150,4 +154,30 @@ if [ "$observed_actor" != "$(printf '%s\n' 1 1)" ]; then
 fi
 finish_peers
 assert_player '6|100|168|1'
-printf 'Concurrent tick, SQL edit, spawn and animation checks passed.\n'
+
+# Movement sees the committed blocker without waiting on an uncommitted health edit.
+db -c "UPDATE doom.actors SET x = 205, y = 128, health = 31 WHERE game_id = $game_id AND kind <> 'player'"
+start_owner "UPDATE doom.actors SET health = 0 WHERE game_id = $game_id AND kind <> 'player'"
+blocked=$(db -v game_id="$game_id" <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '1s';
+SELECT doom.tick(:game_id, 1) AS tick_number \gset
+SELECT abs(x - 173) < 0.00002 FROM doom.actors WHERE game_id = :game_id AND kind = 'player';
+COMMIT;
+SQL
+)
+if [ "$blocked" != t ]; then
+    printf 'expected uncommitted death to leave the actor blocking movement\n' >&2
+    exit 1
+fi
+finish_owner
+released=$(db -v game_id="$game_id" <<'SQL'
+SELECT doom.tick(:game_id, 1) AS tick_number \gset
+SELECT abs(x - 181) < 0.00002 FROM doom.actors WHERE game_id = :game_id AND kind = 'player';
+SQL
+)
+if [ "$released" != t ]; then
+    printf 'expected committed death to release the path\n' >&2
+    exit 1
+fi
+printf 'Concurrent tick, SQL edit, spawn, animation and actor contact checks passed.\n'
