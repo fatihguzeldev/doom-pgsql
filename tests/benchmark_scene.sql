@@ -4,6 +4,10 @@
 \else
     \set rooms 16
 \endif
+\if :{?actors}
+\else
+    \set actors 0
+\endif
 
 BEGIN;
 INSERT INTO doom.levels (name) VALUES ('benchmark corridor') RETURNING level_id \gset
@@ -24,5 +28,18 @@ CROSS JOIN LATERAL (VALUES
         CASE WHEN room < :rooms - 1 THEN room + 1 END)
 ) AS wall(ordinal, x1, y1, x2, y2, neighbor);
 
-SELECT doom.start_game(:level_id, 0, 32, 0);
+SELECT doom.start_game(:level_id, 0, 32, 0) AS game_id \gset
+
+INSERT INTO doom.actor_types (kind, default_health, radius, height, color)
+SELECT 'benchmark pylon', 20, 7, 38, 14449480
+WHERE :actors > 0
+ON CONFLICT (kind) DO NOTHING;
+
+INSERT INTO doom.actors (game_id, sector_id, kind, x, y)
+SELECT :game_id, (actor_id - 1) % :rooms, 'benchmark pylon',
+       ((actor_id - 1) % :rooms) * 128 + 48 + (actor_id * 17) % 64,
+       (actor_id * 37) % 71 - 35
+FROM generate_series(1, :actors) AS actor(actor_id);
+
+SELECT :game_id;
 COMMIT;
