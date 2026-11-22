@@ -117,7 +117,7 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
-    INSERT INTO doom.levels (name) VALUES (level_name) RETURNING level_id INTO imported_level_id;
+    INSERT INTO doom.levels (name, step_height) VALUES (level_name, 24) RETURNING level_id INTO imported_level_id;
 
     WITH decoded AS MATERIALIZED (
         SELECT sector_id, doom.wad_i16(sector_data, 26 * sector_id) AS floor_height,

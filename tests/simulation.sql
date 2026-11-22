@@ -67,6 +67,18 @@ BEGIN
     EXCEPTION WHEN invalid_parameter_value THEN
         NULL;
     END;
+
+    UPDATE doom.sectors SET floor_height = 24 WHERE level_id = test_level AND sector_id = 1;
+    stepped_game := doom.start_game(test_level, 0, 48, 32);
+    PERFORM doom.tick(stepped_game, p_forward => 1, p_ticks => 4);
+    ASSERT (SELECT sector_id FROM doom.actors WHERE game_id = stepped_game AND kind = 'player') = 0,
+        'the default 16-unit limit still blocks a taller step';
+
+    UPDATE doom.levels SET step_height = 24 WHERE level_id = test_level;
+    PERFORM doom.tick(stepped_game, p_forward => 1, p_ticks => 4);
+    ASSERT EXISTS (SELECT FROM doom.actors WHERE game_id = stepped_game AND kind = 'player'
+                   AND sector_id = 1 AND z = 24),
+        'a 24-unit rise is traversable with the imported map limit';
 END;
 $$;
 

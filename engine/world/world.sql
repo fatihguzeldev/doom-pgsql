@@ -1,6 +1,7 @@
 CREATE TABLE doom.levels (
     level_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name text NOT NULL CHECK (name <> '')
+    name text NOT NULL CHECK (name <> ''),
+    step_height integer NOT NULL DEFAULT 16 CHECK (step_height >= 0)
 );
 
 CREATE TABLE doom.sectors (

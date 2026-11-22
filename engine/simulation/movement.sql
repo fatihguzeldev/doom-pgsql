@@ -8,12 +8,13 @@ AS $$
     SELECT coalesce(target_state.floor_height, target.floor_height)
     FROM doom.sectors AS origin
     JOIN doom.sectors AS target ON target.level_id = origin.level_id AND target.sector_id = p_target
+    JOIN doom.levels AS level ON level.level_id = origin.level_id
     LEFT JOIN doom.sector_state AS origin_state
         ON origin_state.game_id = p_game_id AND origin_state.sector_id = origin.sector_id
     LEFT JOIN doom.sector_state AS target_state
         ON target_state.game_id = p_game_id AND target_state.sector_id = target.sector_id
     WHERE origin.level_id = p_level_id AND origin.sector_id = p_origin
-      AND coalesce(target_state.floor_height, target.floor_height) <= p_z + 16
+      AND coalesce(target_state.floor_height, target.floor_height) <= p_z + level.step_height
       AND greatest(p_z, coalesce(target_state.floor_height, target.floor_height)) + p_height
           <= least(coalesce(origin_state.ceiling_height, origin.ceiling_height),
                    coalesce(target_state.ceiling_height, target.ceiling_height))

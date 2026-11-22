@@ -46,6 +46,9 @@ DECLARE
     invalid record;
 BEGIN
     imported_level := doom.import_wad_level(archive, 'testmap');
+    IF (SELECT step_height FROM doom.levels WHERE level_id = imported_level) IS DISTINCT FROM 24 THEN
+        RAISE EXCEPTION 'classic map must allow a 24-unit step';
+    END IF;
 
     IF (SELECT name FROM doom.levels WHERE level_id = imported_level) IS DISTINCT FROM 'TESTMAP' THEN
         RAISE EXCEPTION 'import did not publish the requested level';
