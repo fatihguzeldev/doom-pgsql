@@ -7,15 +7,15 @@ DECLARE
         -- LINEDEFS at byte 12
         '0000 0100 0100 0000 0000 0000 ffff' ||
         '0100 0200 0400 0000 0000 0100 0200' ||
-        -- SIDEDEFS at byte 40. Only the sector references are populated.
-        repeat('00', 28) || '0000' ||
-        repeat('00', 28) || '0100' ||
-        repeat('00', 28) || '0000' ||
+        -- SIDEDEFS at byte 40
+        'f8ff 1100 2d00000000000000 0000000000000000 6d69645f61000000 0000' ||
+        '0000 fdff 75705f6200000000 6c6f775f62000000 2d00000000000000 0100' ||
+        '7800 80ff 75705f6300000000 2020202020202020 6d69645f43200000 0000' ||
         -- VERTEXES at byte 130
         'c0ff e0ff 4000 e0ff 4000 4000' ||
         -- SECTORS at byte 142
-        'f0ff 6000' || repeat('00', 16) || '8000 0000 0000' ||
-        '0800 7000' || repeat('00', 16) || 'c000 0000 0000' ||
+        'f0ff 6000 666c6f6f725f6100 2d00000000000000 8000 0000 0000' ||
+        '0800 7000 2020202020202020 4345494c5f420000 c000 0000 0000' ||
         -- THINGS at byte 194
         'e0ff f0ff 0e01 0100 0780' ||
         '0f00 0080 d3ff 23c1 ffff' ||
@@ -37,6 +37,8 @@ DECLARE
     empty_level bigint;
     sector_rows integer[];
     line_rows integer[];
+    sector_materials text[];
+    line_surfaces text[];
     thing_rows integer[];
     level_count bigint;
     invalid record;
@@ -64,6 +66,26 @@ BEGIN
         [1, 64, -32, 64, 64, 1, 0, 0]
     ] THEN
         RAISE EXCEPTION 'incorrect imported lines: %', line_rows;
+    END IF;
+
+    SELECT array_agg(ARRAY[floor_material, ceiling_material] ORDER BY sector_id)
+    INTO sector_materials
+    FROM doom.sectors WHERE level_id = imported_level;
+    IF sector_materials IS DISTINCT FROM ARRAY[['FLOOR_A', NULL], [NULL, 'CEIL_B']] THEN
+        RAISE EXCEPTION 'incorrect imported sector materials: %', sector_materials;
+    END IF;
+
+    SELECT array_agg(ARRAY[line_id::text, is_back::text, x_offset::text, y_offset::text,
+                          upper_material, lower_material, middle_material]
+                     ORDER BY line_id, is_back)
+    INTO line_surfaces
+    FROM doom.line_surfaces WHERE level_id = imported_level;
+    IF line_surfaces IS DISTINCT FROM ARRAY[
+        ['0', 'false', '-8', '17', NULL, NULL, 'MID_A'],
+        ['1', 'false', '0', '-3', 'UP_B', 'LOW_B', NULL],
+        ['1', 'true', '120', '-128', 'UP_C', NULL, 'MID_C ']
+    ] THEN
+        RAISE EXCEPTION 'incorrect imported line surfaces: %', line_surfaces;
     END IF;
 
     SELECT array_agg(ARRAY[thing_id, x, y, angle_deg, type_code, flags] ORDER BY thing_id)

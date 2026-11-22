@@ -1,3 +1,11 @@
+CREATE FUNCTION doom.wad_material_name(p_field bytea)
+RETURNS text
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN (
+    SELECT CASE WHEN btrim(name) IN ('', '-') THEN NULL ELSE upper(name COLLATE "C") END
+    FROM (VALUES (doom.wad_name(p_field))) AS decoded(name)
+);
+
 CREATE FUNCTION doom.import_wad_level(p_wad bytea, p_level_name text)
 RETURNS bigint
 LANGUAGE plpgsql STRICT
@@ -91,11 +99,15 @@ BEGIN
     WITH decoded AS MATERIALIZED (
         SELECT sector_id, doom.wad_i16(sector_data, 26 * sector_id) AS floor_height,
                doom.wad_i16(sector_data, 26 * sector_id + 2) AS ceiling_height,
-               doom.wad_i16(sector_data, 26 * sector_id + 20) AS light_level
+               doom.wad_i16(sector_data, 26 * sector_id + 20) AS light_level,
+               doom.wad_material_name(substring(sector_data FROM 26 * sector_id + 5 FOR 8)) AS floor_material,
+               doom.wad_material_name(substring(sector_data FROM 26 * sector_id + 13 FOR 8)) AS ceiling_material
         FROM generate_series(0, sector_count - 1) AS sector(sector_id)
     )
-    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, light_level)
-    SELECT imported_level_id, sector_id, floor_height, ceiling_height, light_level
+    INSERT INTO doom.sectors (level_id, sector_id, floor_height, ceiling_height, light_level,
+                              floor_material, ceiling_material)
+    SELECT imported_level_id, sector_id, floor_height, ceiling_height, light_level,
+           floor_material, ceiling_material
     FROM decoded
     WHERE floor_height <= ceiling_height AND light_level BETWEEN 0 AND 255;
 
@@ -132,6 +144,20 @@ BEGIN
         RAISE EXCEPTION 'invalid linedef indices or identical endpoints in WAD map %', level_name
             USING ERRCODE = '22023';
     END IF;
+
+    INSERT INTO doom.line_surfaces (level_id, line_id, is_back, x_offset, y_offset,
+                                    upper_material, lower_material, middle_material)
+    SELECT imported_level_id, line.line_id, face.is_back,
+           doom.wad_i16(side_data, 30 * face.side_id), doom.wad_i16(side_data, 30 * face.side_id + 2),
+           doom.wad_material_name(substring(side_data FROM 30 * face.side_id + 5 FOR 8)),
+           doom.wad_material_name(substring(side_data FROM 30 * face.side_id + 13 FOR 8)),
+           doom.wad_material_name(substring(side_data FROM 30 * face.side_id + 21 FOR 8))
+    FROM generate_series(0, line_count - 1) AS line(line_id)
+    CROSS JOIN LATERAL (VALUES
+        (false, doom.wad_u16(line_data, 14 * line.line_id + 10)),
+        (true, nullif(doom.wad_u16(line_data, 14 * line.line_id + 12), 65535))
+    ) AS face(is_back, side_id)
+    WHERE face.side_id IS NOT NULL;
 
     IF thing_count > 0 THEN
         thing_data := substring(p_wad FROM lump_offsets[1] + 1 FOR lump_sizes[1]);
