@@ -7,10 +7,12 @@ database=$1
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/doom-concurrency.XXXXXXXX")
 owner_app=doom-concurrency-owner-$$
 tick_app=doom-concurrency-tick-$$
+batch_app=doom-concurrency-batch-$$
 actor_kind=concurrency-fixture-$$
 pickup_kind=concurrency-pickup-$$
 owner_pid=
 tick_pid=
+batch_pid=
 level_id=
 game_id=
 
@@ -23,7 +25,7 @@ cleanup() {
     status=$?
     trap - EXIT
     exec 3>&-
-    for pid in "$owner_pid" "$tick_pid"; do
+    for pid in "$owner_pid" "$tick_pid" "$batch_pid"; do
         if [ -n "$pid" ]; then
             kill "$pid" 2>/dev/null || true
             wait "$pid" 2>/dev/null || true
@@ -39,7 +41,7 @@ DELETE FROM doom.actor_types WHERE kind IN (:'actor_kind', :'pickup_kind');
 COMMIT;
 SQL
     fi
-    for file in "$scratch/owner.log" "$scratch/tick.log"; do
+    for file in "$scratch/owner.log" "$scratch/tick.log" "$scratch/batch.log"; do
         if [ -f "$file" ]; then
             if [ "$status" -ne 0 ]; then cat "$file" >&2; fi
             rm "$file"
@@ -335,6 +337,40 @@ if [ "$collected" != "$(printf '%s\n' t t)" ]; then
     exit 1
 fi
 
+# A batch paused at its second command keeps earlier input private and serializes other ticks.
+player_pose() {
+    db -c "SELECT game.tick_number, player.x, player.angle
+        FROM doom.games AS game JOIN doom.actors AS player USING (game_id)
+        WHERE game.game_id = $game_id AND player.kind = 'player'"
+}
+before_batch=$(player_pose)
+after_batch=$(db -c "SELECT game.tick_number + 3, player.x - 8, player.angle + 0.125
+    FROM doom.games AS game JOIN doom.actors AS player USING (game_id)
+    WHERE game.game_id = $game_id AND player.kind = 'player'")
+start_owner "UPDATE doom.actors SET health = 100 WHERE game_id = $game_id AND actor_id = $target_id"
+PGAPPNAME="$batch_app" db -c "SELECT doom.tick_inputs($game_id, ARRAY[
+    ROW(-1, 0, 0, 1, false, false)::doom.input_command,
+    ROW(0, 0, 0, 1, false, true)::doom.input_command])" >"$scratch/batch.log" 2>&1 3>&- &
+batch_pid=$!
+wait_for_peer "$batch_app" blocked
+PGAPPNAME="$tick_app" db -c "SELECT doom.tick($game_id, p_turn => 0.125)" >"$scratch/tick.log" 2>&1 3>&- &
+tick_pid=$!
+wait_for_peer "$tick_app" blocked
+if [ "$(player_pose)" != "$before_batch" ]; then
+    printf 'uncommitted input batch exposed a partial player pose\n' >&2
+    exit 1
+fi
+finish_owner
+wait "$batch_pid"
+batch_pid=
+wait "$tick_pid"
+tick_pid=
+if [ "$(player_pose)" != "$after_batch" ] || [ "$(db -c "SELECT health FROM doom.actors
+    WHERE game_id = $game_id AND actor_id = $target_id")" != 80 ]; then
+    printf 'expected both batch commands and the waiting tick to commit in order\n' >&2
+    exit 1
+fi
+
 # A tick waiting on completion observes the finished game without advancing it.
 db -c "INSERT INTO doom.level_exits (level_id, sector_id) VALUES ($level_id, 1)"
 finish_tick=$(db -c "SELECT tick_number + 1 FROM doom.games WHERE game_id = $game_id")
@@ -391,4 +427,4 @@ if [ "$shade" != 0a1428 ]; then
     exit 1
 fi
 
-printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit, pickups, completion and palette checks passed.\n'
+printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit, pickups, input batches, completion and palette checks passed.\n'
