@@ -261,8 +261,12 @@ BEGIN
         IF hit.hit_id IS NULL THEN
             -- The remaining part of an open ray sees the current sector's planes.
             wall_top := greatest(clip_top, least(clip_bottom, ceil(center_y - 0.5)))::integer;
-            spans := array_append(spans, ROW(column_x, clip_top, wall_top, current_sector.ceiling_rgb)::doom._render_span);
-            spans := array_append(spans, ROW(column_x, wall_top, clip_bottom, current_sector.floor_rgb)::doom._render_span);
+            IF clip_top < wall_top THEN
+                spans := array_append(spans, ROW(column_x, clip_top, wall_top, current_sector.ceiling_rgb)::doom._render_span);
+            END IF;
+            IF wall_top < clip_bottom THEN
+                spans := array_append(spans, ROW(column_x, wall_top, clip_bottom, current_sector.floor_rgb)::doom._render_span);
+            END IF;
             CONTINUE;
         END IF;
 
@@ -288,14 +292,20 @@ BEGIN
         wall_bottom := greatest(clip_top, least(clip_bottom,
             ceil(center_y + (eye_z - current_sector.floor_height) * scale - 0.5)))::integer;
 
-        spans := array_append(spans, ROW(column_x, clip_top, wall_top, current_sector.ceiling_rgb)::doom._render_span);
-        spans := array_append(spans, ROW(column_x, wall_bottom, clip_bottom, current_sector.floor_rgb)::doom._render_span);
+        IF clip_top < wall_top THEN
+            spans := array_append(spans, ROW(column_x, clip_top, wall_top, current_sector.ceiling_rgb)::doom._render_span);
+        END IF;
+        IF wall_bottom < clip_bottom THEN
+            spans := array_append(spans, ROW(column_x, wall_bottom, clip_bottom, current_sector.floor_rgb)::doom._render_span);
+        END IF;
 
         far_sector := hit.far_surface;
         opening_floor := greatest(current_sector.floor_height, far_sector.floor_height);
         opening_ceiling := least(current_sector.ceiling_height, far_sector.ceiling_height);
         IF far_sector.sector_id IS NULL OR opening_floor >= opening_ceiling THEN
-            spans := array_append(spans, ROW(column_x, wall_top, wall_bottom, hit.rgb)::doom._render_span);
+            IF wall_top < wall_bottom THEN
+                spans := array_append(spans, ROW(column_x, wall_top, wall_bottom, hit.rgb)::doom._render_span);
+            END IF;
             clip_top := clip_bottom;
             CONTINUE;
         END IF;
@@ -304,8 +314,12 @@ BEGIN
             ceil(center_y + (eye_z - opening_ceiling) * scale - 0.5)))::integer;
         opening_bottom := greatest(wall_top, least(wall_bottom,
             ceil(center_y + (eye_z - opening_floor) * scale - 0.5)))::integer;
-        spans := array_append(spans, ROW(column_x, wall_top, opening_top, hit.rgb)::doom._render_span);
-        spans := array_append(spans, ROW(column_x, opening_bottom, wall_bottom, hit.rgb)::doom._render_span);
+        IF wall_top < opening_top THEN
+            spans := array_append(spans, ROW(column_x, wall_top, opening_top, hit.rgb)::doom._render_span);
+        END IF;
+        IF opening_bottom < wall_bottom THEN
+            spans := array_append(spans, ROW(column_x, opening_bottom, wall_bottom, hit.rgb)::doom._render_span);
+        END IF;
         clip_top := opening_top;
         clip_bottom := opening_bottom;
         current_sector := far_sector;
@@ -321,7 +335,6 @@ BEGIN
     FOR row_patch IN
         SELECT span.row_start, span.column_x, span.rgb
         FROM unnest(spans) AS span
-        WHERE span.row_start < span.row_end
         ORDER BY span.row_start, span.column_x
     LOOP
         IF row_patch.row_start > current_row_y THEN
