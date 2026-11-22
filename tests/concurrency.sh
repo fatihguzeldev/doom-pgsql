@@ -8,6 +8,7 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/doom-concurrency.XXXXXXXX")
 owner_app=doom-concurrency-owner-$$
 tick_app=doom-concurrency-tick-$$
 actor_kind=concurrency-fixture-$$
+pickup_kind=concurrency-pickup-$$
 owner_pid=
 tick_pid=
 level_id=
@@ -29,11 +30,12 @@ cleanup() {
         fi
     done
     if [ -n "$game_id" ]; then
-        db -v game_id="$game_id" -v level_id="$level_id" -v actor_kind="$actor_kind" <<'SQL' || status=1
+        db -v game_id="$game_id" -v level_id="$level_id" -v actor_kind="$actor_kind" \
+            -v pickup_kind="$pickup_kind" <<'SQL' || status=1
 BEGIN;
 DELETE FROM doom.games WHERE game_id = :game_id;
 DELETE FROM doom.levels WHERE level_id = :level_id;
-DELETE FROM doom.actor_types WHERE kind = :'actor_kind';
+DELETE FROM doom.actor_types WHERE kind IN (:'actor_kind', :'pickup_kind');
 COMMIT;
 SQL
     fi
@@ -292,6 +294,47 @@ if [ "$resumed" != "$(printf '%s\n' t t)" ]; then
     exit 1
 fi
 
+# A lock that would block deletion also defers healing.
+pickup_id=$(db -v game_id="$game_id" -v pickup_kind="$pickup_kind" <<'SQL'
+INSERT INTO doom.actor_types (kind, default_health, radius, height, blocks_actors, shootable)
+VALUES (:'pickup_kind', 1, 4, 8, false, false);
+INSERT INTO doom.health_pickups (kind, amount) VALUES (:'pickup_kind', 25);
+UPDATE doom.actors SET health = 60 WHERE game_id = :game_id AND kind = 'player';
+INSERT INTO doom.actors (game_id, sector_id, kind, x, y, z)
+SELECT game_id, sector_id, :'pickup_kind', x, y, z FROM doom.actors
+WHERE game_id = :game_id AND kind = 'player' RETURNING actor_id;
+SQL
+)
+start_owner "SELECT actor_id FROM doom.actors WHERE game_id = $game_id AND actor_id = $pickup_id FOR KEY SHARE"
+unhealed=$(db -v game_id="$game_id" <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '1s';
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT health = 60 FROM doom.actors WHERE game_id = :game_id AND kind = 'player';
+COMMIT;
+SQL
+)
+if [ "$unhealed" != t ]; then
+    printf 'expected a locked pickup to leave player health unchanged\n' >&2
+    exit 1
+fi
+finish_owner
+collected=$(db -v game_id="$game_id" -v pickup_id="$pickup_id" <<'SQL'
+UPDATE doom.actors SET health = 0 WHERE game_id = :game_id AND actor_id = :pickup_id;
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT health = 60 FROM doom.actors WHERE game_id = :game_id AND kind = 'player';
+UPDATE doom.actors SET health = 1 WHERE game_id = :game_id AND actor_id = :pickup_id;
+SELECT doom.tick(:game_id) AS tick_number \gset
+SELECT health = 85 AND NOT EXISTS (
+    SELECT FROM doom.actors WHERE game_id = :game_id AND actor_id = :pickup_id
+) FROM doom.actors WHERE game_id = :game_id AND kind = 'player';
+SQL
+)
+if [ "$collected" != "$(printf '%s\n' t t)" ]; then
+    printf 'expected only the revived pickup to heal and be consumed\n' >&2
+    exit 1
+fi
+
 # A tick waiting on completion observes the finished game without advancing it.
 db -c "INSERT INTO doom.level_exits (level_id, sector_id) VALUES ($level_id, 1)"
 finish_tick=$(db -c "SELECT tick_number + 1 FROM doom.games WHERE game_id = $game_id")
@@ -348,4 +391,4 @@ if [ "$shade" != 0a1428 ]; then
     exit 1
 fi
 
-printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit, completion and palette checks passed.\n'
+printf 'Concurrent ticks, SQL edits, contacts, gates, shots, pursuit, pickups, completion and palette checks passed.\n'
