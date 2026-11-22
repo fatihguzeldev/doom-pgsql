@@ -10,4 +10,5 @@
 \ir level_start.sql
 \ir movement_corner.sql
 \ir renderer.sql
+\ir render_materials.sql
 \ir step.sql
