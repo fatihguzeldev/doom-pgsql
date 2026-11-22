@@ -32,6 +32,9 @@ CREATE TABLE doom.lines (
     FOREIGN KEY (level_id, back_sector_id) REFERENCES doom.sectors ON DELETE CASCADE
 );
 
+CREATE INDEX lines_front_sector ON doom.lines (level_id, front_sector_id);
+CREATE INDEX lines_back_sector ON doom.lines (level_id, back_sector_id);
+
 CREATE TABLE doom.games (
     game_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     level_id bigint NOT NULL REFERENCES doom.levels,
