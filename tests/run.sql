@@ -3,6 +3,7 @@
 \ir world.sql
 \ir wad.sql
 \ir wad_level.sql
+\ir wad_spatial.sql
 \ir wad_materials.sql
 \ir wad_textures.sql
 \ir wad_level_materials.sql

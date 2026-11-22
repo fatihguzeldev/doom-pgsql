@@ -209,6 +209,14 @@ BEGIN
         FROM generate_series(0, thing_count - 1) AS thing(thing_id);
     END IF;
 
+    IF lump_sizes[5] > 0 AND lump_sizes[6] > 0 THEN
+        PERFORM doom._compile_wad_spatial(imported_level_id, vertex_x, vertex_y,
+            substring(p_wad FROM lump_offsets[5] + 1 FOR lump_sizes[5]),
+            substring(p_wad FROM lump_offsets[6] + 1 FOR lump_sizes[6]),
+            CASE WHEN lump_sizes[7] > 0 THEN substring(p_wad FROM lump_offsets[7] + 1 FOR lump_sizes[7])
+                 ELSE ''::bytea END);
+    END IF;
+
     RETURN imported_level_id;
 END;
 $$;

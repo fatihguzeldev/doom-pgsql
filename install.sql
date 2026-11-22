@@ -10,6 +10,7 @@ CREATE SCHEMA doom;
 \ir engine/world/level_things.sql
 \ir engine/world/surfaces.sql
 \ir engine/wad/directory.sql
+\ir engine/wad/spatial.sql
 \ir engine/wad/level.sql
 \ir engine/wad/line_actions.sql
 \ir engine/wad/materials.sql
