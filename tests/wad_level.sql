@@ -3,8 +3,7 @@ BEGIN;
 DO $$
 DECLARE
     archive bytea := decode(
-        -- The directory starts after the four geometry lumps.
-        '50574144 0b000000 c2000000' ||
+        '50574144 0b000000 d6000000' ||
         -- LINEDEFS at byte 12
         '0000 0100 0100 0000 0000 0000 ffff' ||
         '0100 0200 0400 0000 0000 0100 0200' ||
@@ -17,9 +16,12 @@ DECLARE
         -- SECTORS at byte 142
         'f0ff 6000' || repeat('00', 16) || '8000 0000 0000' ||
         '0800 7000' || repeat('00', 16) || 'c000 0000 0000' ||
-        -- Directory at byte 194
+        -- THINGS at byte 194
+        'e0ff f0ff 0e01 0100 0780' ||
+        '0f00 0080 d3ff 23c1 ffff' ||
+        -- Directory at byte 214
         '00000000 00000000 544553544d415000' || -- TESTMAP
-        '00000000 00000000 5448494e47530000' || -- THINGS
+        'c2000000 14000000 5448494e47530000' || -- THINGS
         '0c000000 1c000000 4c494e4544454653' || -- LINEDEFS
         '28000000 5a000000 5349444544454653' || -- SIDEDEFS
         '82000000 0c000000 5645525445584553' || -- VERTEXES
@@ -32,8 +34,10 @@ DECLARE
         'hex'
     );
     imported_level bigint;
+    empty_level bigint;
     sector_rows integer[];
     line_rows integer[];
+    thing_rows integer[];
     level_count bigint;
     invalid record;
 BEGIN
@@ -62,14 +66,28 @@ BEGIN
         RAISE EXCEPTION 'incorrect imported lines: %', line_rows;
     END IF;
 
+    SELECT array_agg(ARRAY[thing_id, x, y, angle_deg, type_code, flags] ORDER BY thing_id)
+    INTO thing_rows
+    FROM doom.level_things WHERE level_id = imported_level;
+    IF thing_rows IS DISTINCT FROM ARRAY[[0, -32, -16, 270, 1, 32775], [1, 15, -32768, -45, 49443, 65535]] THEN
+        RAISE EXCEPTION 'incorrect imported things: %', thing_rows;
+    END IF;
+
+    empty_level := doom.import_wad_level(
+        overlay(archive PLACING '\xffffffff00000000'::bytea FROM 231), 'TESTMAP');
+    IF EXISTS (SELECT FROM doom.level_things WHERE level_id = empty_level) THEN
+        RAISE EXCEPTION 'a zero-length THINGS lump should produce no rows';
+    END IF;
+
     SELECT count(*) INTO level_count FROM doom.levels;
     FOR invalid IN
         SELECT * FROM (VALUES
             ('unknown level', archive, 'UNKNOWN'),
             ('blank level name',
-                overlay(archive PLACING decode(repeat('00', 8), 'hex') FROM 203), ''),
-            ('missing classic lump', set_byte(archive, 234, 88), 'TESTMAP'),
-            ('partial linedef', set_byte(archive, 230, 27), 'TESTMAP'),
+                overlay(archive PLACING decode(repeat('00', 8), 'hex') FROM 223), ''),
+            ('missing classic lump', set_byte(archive, 254, 88), 'TESTMAP'),
+            ('partial thing', set_byte(archive, 234, 19), 'TESTMAP'),
+            ('partial linedef', set_byte(archive, 250, 27), 'TESTMAP'),
             ('missing vertex', set_byte(archive, 14, 3), 'TESTMAP'),
             ('missing front sidedef', set_byte(archive, 22, 3), 'TESTMAP'),
             ('missing back sidedef', set_byte(archive, 38, 3), 'TESTMAP'),

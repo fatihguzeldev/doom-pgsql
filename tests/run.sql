@@ -6,6 +6,7 @@
 \ir wad_materials.sql
 \ir wad_textures.sql
 \ir simulation.sql
+\ir level_start.sql
 \ir movement_corner.sql
 \ir renderer.sql
 \ir step.sql

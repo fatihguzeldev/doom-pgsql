@@ -11,10 +11,12 @@ DECLARE
     lump_names text[];
     lump_offsets integer[];
     lump_sizes integer[];
+    thing_data bytea;
     line_data bytea;
     side_data bytea;
     vertex_data bytea;
     sector_data bytea;
+    thing_count integer;
     line_count integer;
     side_count integer;
     vertex_count integer;
@@ -46,6 +48,11 @@ BEGIN
         RAISE EXCEPTION 'classic WAD map % is missing or has an unsupported lump layout', level_name
             USING ERRCODE = '22023';
     END IF;
+
+    IF lump_sizes[1] % 10 <> 0 THEN
+        RAISE EXCEPTION 'invalid THINGS record size in WAD map %', level_name USING ERRCODE = '22023';
+    END IF;
+    thing_count := lump_sizes[1] / 10;
 
     line_count := lump_sizes[2] / 14;
     side_count := lump_sizes[3] / 30;
@@ -124,6 +131,15 @@ BEGIN
     IF inserted_rows <> line_count THEN
         RAISE EXCEPTION 'invalid linedef indices or identical endpoints in WAD map %', level_name
             USING ERRCODE = '22023';
+    END IF;
+
+    IF thing_count > 0 THEN
+        thing_data := substring(p_wad FROM lump_offsets[1] + 1 FOR lump_sizes[1]);
+        INSERT INTO doom.level_things (level_id, thing_id, x, y, angle_deg, type_code, flags)
+        SELECT imported_level_id, thing_id, doom.wad_i16(thing_data, 10 * thing_id),
+               doom.wad_i16(thing_data, 10 * thing_id + 2), doom.wad_i16(thing_data, 10 * thing_id + 4),
+               doom.wad_u16(thing_data, 10 * thing_id + 6), doom.wad_u16(thing_data, 10 * thing_id + 8)
+        FROM generate_series(0, thing_count - 1) AS thing(thing_id);
     END IF;
 
     RETURN imported_level_id;

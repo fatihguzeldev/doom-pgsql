@@ -3,12 +3,14 @@
 BEGIN;
 CREATE SCHEMA doom;
 \ir engine/world/world.sql
+\ir engine/world/level_things.sql
 \ir engine/wad/directory.sql
 \ir engine/wad/level.sql
 \ir engine/wad/materials.sql
 \ir engine/wad/textures.sql
 \ir engine/simulation/movement.sql
 \ir engine/simulation/tick.sql
+\ir engine/simulation/level_start.sql
 \ir engine/renderer/render.sql
 \ir engine/step.sql
 COMMIT;
