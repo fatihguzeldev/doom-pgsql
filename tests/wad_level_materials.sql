@@ -39,6 +39,7 @@ DECLARE
     archive bytea;
     main_level bigint;
     second_level bigint;
+    test_game bigint;
     observed record;
 BEGIN
     SELECT decode(string_agg(lpad(to_hex((sample % 64 + 3 * (sample / 64)) % 256), 2, '0'), ''
@@ -85,6 +86,13 @@ BEGIN
         OR observed.coverage IS DISTINCT FROM decode(repeat('ff', 4096), 'hex')
     THEN
         RAISE EXCEPTION 'incorrect imported flat material';
+    END IF;
+
+    test_game := doom.start_game(main_level, 0, 32, -32, pi() / 2);
+    IF doom.render(test_game, 1, 1) IS DISTINCT FROM '\x0b2136'::bytea
+        OR doom.render_spans(test_game, 1, 1) IS DISTINCT FROM '\x000000000b2136'::bytea
+    THEN
+        RAISE EXCEPTION 'imported wall palette and texture did not reach both frame formats';
     END IF;
 
     PERFORM doom.import_wad_materials(second_level,
