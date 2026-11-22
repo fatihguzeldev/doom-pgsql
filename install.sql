@@ -5,6 +5,7 @@ CREATE SCHEMA doom;
 \ir engine/world/world.sql
 \ir engine/world/gates.sql
 \ir engine/world/pursuits.sql
+\ir engine/world/pickups.sql
 \ir engine/world/level_things.sql
 \ir engine/world/surfaces.sql
 \ir engine/wad/directory.sql
@@ -22,6 +23,7 @@ CREATE SCHEMA doom;
 \ir engine/simulation/ray_targets.sql
 \ir engine/simulation/fire.sql
 \ir engine/simulation/pursuit.sql
+\ir engine/simulation/pickups.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/level_start.sql
 \ir engine/renderer/types.sql

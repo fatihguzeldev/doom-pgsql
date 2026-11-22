@@ -30,10 +30,12 @@ DECLARE
     controls_player boolean := p_forward <> 0 OR p_strafe <> 0 OR p_turn <> 0;
     has_motion boolean;
     has_pursuers boolean;
+    has_pickups boolean;
     exit_sectors integer[];
     at_exit boolean;
     actor_height double precision;
     actor_radius double precision;
+    max_health integer;
     speed double precision;
     camera_cos double precision;
     camera_sin double precision;
@@ -70,27 +72,41 @@ BEGIN
                    LIMIT 1
                ) AS living
            ),
+           EXISTS (
+               SELECT FROM doom.health_pickups AS pickup
+               CROSS JOIN LATERAL (
+                   SELECT FROM doom.actors AS actor
+                   WHERE actor.game_id = p_game_id AND actor.kind = pickup.kind AND actor.life_state = 'alive'
+                   ORDER BY actor.collision_x_bucket
+                   LIMIT 1
+               ) AS available
+           ),
            (SELECT array_agg(destination.sector_id) FROM doom.level_exits AS destination
             WHERE destination.level_id = game_level_id)
-    INTO has_motion, has_pursuers, exit_sectors;
-    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion AND NOT has_pursuers AND exit_sectors IS NULL THEN
+    INTO has_motion, has_pursuers, has_pickups, exit_sectors;
+    IF NOT controls_player AND NOT p_use AND NOT p_fire AND NOT has_motion
+        AND NOT has_pursuers AND NOT has_pickups AND exit_sectors IS NULL
+    THEN
         RETURN new_tick;
     END IF;
 
-    IF controls_player OR p_use OR p_fire OR has_pursuers OR exit_sectors IS NOT NULL THEN
+    IF controls_player OR p_use OR p_fire OR has_pursuers OR has_pickups OR exit_sectors IS NOT NULL THEN
         -- Serialize against edits to the actor before caching its coordinates for the batch.
         SELECT * INTO STRICT player FROM doom.actors
         WHERE game_id = p_game_id AND kind = 'player' FOR NO KEY UPDATE;
         IF player.life_state = 'dead' THEN
             controls_player := false;
             has_pursuers := false;
+            has_pickups := false;
         END IF;
     END IF;
 
     IF controls_player AND (p_forward <> 0 OR p_strafe <> 0) THEN
-        SELECT height, radius INTO STRICT actor_height, actor_radius
-        FROM doom.actor_types WHERE kind = player.kind;
         speed := 8 / greatest(1.0, sqrt(p_forward * p_forward + p_strafe * p_strafe));
+    END IF;
+    IF speed IS NOT NULL OR has_pickups THEN
+        SELECT height, radius, default_health INTO STRICT actor_height, actor_radius, max_health
+        FROM doom.actor_types WHERE kind = player.kind;
     END IF;
 
     FOR tic IN 1..p_ticks LOOP
@@ -115,6 +131,9 @@ BEGIN
                                       speed * (p_forward * camera_sin + p_strafe * camera_cos),
                                       actor_height, actor_radius);
         END IF;
+        IF has_pickups AND player.health < max_health THEN
+            player.health := doom._collect_health(player, actor_height, actor_radius, max_health);
+        END IF;
         at_exit := exit_sectors IS NOT NULL AND player.health > 0 AND player.sector_id = ANY (exit_sectors);
         -- Write the pose before other actors use it or the batch returns.
         IF controls_player AND (has_pursuers OR at_exit OR tic = p_ticks) THEN
@@ -129,6 +148,7 @@ BEGIN
             IF player.health <= 0 THEN
                 controls_player := false;
                 has_pursuers := false;
+                has_pickups := false;
                 speed := NULL;
             END IF;
         END IF;

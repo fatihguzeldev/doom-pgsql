@@ -16,6 +16,7 @@
 \ir gates.sql
 \ir fire.sql
 \ir pursuit.sql
+\ir health_pickups.sql
 \ir renderer.sql
 \ir render_compact.sql
 \ir render_materials.sql
