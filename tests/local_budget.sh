@@ -64,6 +64,13 @@ export PGPORT
 set -- $ids
 python3 -B "$repo/tests/benchmark_play.py" "$1" --seconds "$seconds" --container "$container"
 docker update --cpu-period "$period" --cpu-quota "$((period / 16))" "$container" >/dev/null
-docker exec "$container" cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max >&2
+limits=$(docker exec "$container" cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.max.burst \
+    /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.swap.max)
+expected=$(printf '%s %s\n0\n536870912\n0' "$((period / 16))" "$period")
+if [ "$limits" != "$expected" ]; then
+    printf 'Unexpected local cgroup limits:\n%s\n' "$limits" >&2
+    exit 1
+fi
+printf 'CPU quota: %s/%s µs; memory: 512 MiB; no burst or swap\n' "$((period / 16))" "$period" >&2
 python3 -B "$repo/tests/benchmark_play.py" --control --seconds "$seconds" --profile "$profile" --container "$container"
 python3 -B "$repo/tests/benchmark_play.py" "$2" --seconds "$seconds" --profile "$profile" --container "$container"
