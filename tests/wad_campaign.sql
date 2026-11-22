@@ -35,6 +35,9 @@ DECLARE
     side_game bigint;
     final_game bigint;
     level_count bigint;
+    idle_inputs CONSTANT doom.input_command[] := ARRAY[ROW(0, 0, 0, 3, false, false)::doom.input_command];
+    use_inputs CONSTANT doom.input_command[] := ARRAY[ROW(0, 0, 0, 1, true, false)::doom.input_command];
+    ack record;
     advanced record;
 BEGIN
     -- Deliberately write the directory out of campaign order.
@@ -60,28 +63,58 @@ BEGIN
 
     UPDATE doom.actors SET health = 70 WHERE game_id = first_game AND kind = 'player';
     INSERT INTO doom.game_keys (game_id, key_kind) VALUES (first_game, 'red');
-    PERFORM doom.tick(first_game, p_use => true);
+
+    SELECT * INTO STRICT ack FROM doom.tick_wad_campaign(first_game, idle_inputs);
+    ASSERT ack.game_id = first_game AND ack.tick_number = 3 AND NOT ack.campaign_finished,
+        'the input-only call acknowledges the applied tick on the current map';
+    BEGIN
+        PERFORM doom.render_compact(first_game, 0, 5);
+        RAISE EXCEPTION 'expected separate render to reject zero width';
+    EXCEPTION WHEN invalid_parameter_value THEN
+        NULL;
+    END;
+    ASSERT (SELECT tick_number FROM doom.games WHERE game_id = first_game) = 3,
+        'a separate render failure leaves the acknowledged ticks in place';
+
+    BEGIN
+        PERFORM doom.step_wad_campaign(first_game, 0, 5, use_inputs);
+        RAISE EXCEPTION 'expected combined step to reject zero width';
+    EXCEPTION WHEN invalid_parameter_value THEN
+        NULL;
+    END;
+    ASSERT EXISTS (SELECT FROM doom.games WHERE game_id = first_game AND tick_number = 3
+                   AND finished_at_tick IS NULL)
+       AND (SELECT next_game_id FROM doom.wad_campaign_games WHERE game_id = first_game) IS NULL,
+        'a failed combined step rolls back both input and any transition';
+
+    SELECT * INTO STRICT ack FROM doom.tick_wad_campaign(first_game, use_inputs);
     ASSERT (SELECT exit_kind FROM doom.games WHERE game_id = first_game) = 'secret',
         'the imported secret switch completes through the normal use input';
-
-    side_game := doom.advance_wad_campaign(first_game);
+    side_game := ack.game_id;
     ASSERT (SELECT name FROM doom.levels JOIN doom.games USING (level_id) WHERE game_id = side_game) = 'E1M9';
+    ASSERT ack.tick_number = 0 AND NOT ack.campaign_finished,
+        'the input-only transition acknowledges the newly active map and its tick';
+    SELECT * INTO STRICT ack FROM doom.tick_wad_campaign(first_game, use_inputs);
+    ASSERT ack.game_id = side_game AND ack.tick_number = 0 AND NOT ack.campaign_finished,
+        'input retried on a finished map does not reach its successor';
     ASSERT doom.advance_wad_campaign(first_game) = side_game, 'retries do not start a duplicate next game';
     ASSERT (SELECT health FROM doom.actors WHERE game_id = side_game AND kind = 'player') = 70
        AND (SELECT skill FROM doom.wad_campaign_games WHERE game_id = side_game) = 2
        AND NOT EXISTS (SELECT FROM doom.game_keys WHERE game_id = side_game),
         'campaign progression carries health and skill while refreshing map keys';
 
-    SELECT * INTO STRICT advanced FROM doom.step_wad_campaign(side_game, 7, 5,
-        ARRAY[ROW(0, 0, 0, 1, true, false)::doom.input_command]);
+    SELECT * INTO STRICT advanced FROM doom.step_wad_campaign(side_game, 7, 5, use_inputs);
     final_game := advanced.game_id;
     ASSERT (SELECT name FROM doom.levels JOIN doom.games USING (level_id) WHERE game_id = final_game) = 'E1M2',
         'an ordinary exit from a secret map resumes the original route';
     ASSERT NOT advanced.campaign_finished AND advanced.frame = doom.render_compact(final_game, 7, 5),
         'the campaign step renders its newly active map';
-    SELECT * INTO STRICT advanced FROM doom.step_wad_campaign(final_game, 7, 5,
-        ARRAY[ROW(0, 0, 0, 1, true, false)::doom.input_command]);
+    SELECT * INTO STRICT ack FROM doom.tick_wad_campaign(final_game, use_inputs);
+    ASSERT ack.game_id = final_game AND ack.tick_number = 1 AND ack.campaign_finished,
+        'the input-only call reports the final map and its frozen tick';
+    SELECT * INTO STRICT advanced FROM doom.step_wad_campaign(final_game, 7, 5, use_inputs);
     ASSERT advanced.campaign_finished AND advanced.game_id = final_game
+       AND advanced.frame = doom.render_compact(final_game, 7, 5)
        AND doom.advance_wad_campaign(final_game) IS NULL
        AND (SELECT exit_kind FROM doom.games WHERE game_id = final_game) = 'normal',
         'the final map finishes the campaign';

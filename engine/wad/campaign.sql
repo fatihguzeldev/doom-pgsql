@@ -150,10 +150,10 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION doom.step_wad_campaign(
-    p_game_id bigint, p_width integer, p_height integer, p_inputs doom.input_command[]
+CREATE FUNCTION doom.tick_wad_campaign(
+    p_game_id bigint, p_inputs doom.input_command[]
 )
-RETURNS TABLE (game_id bigint, campaign_finished boolean, frame bytea)
+RETURNS TABLE (game_id bigint, tick_number bigint, campaign_finished boolean)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -164,15 +164,33 @@ BEGIN
         RAISE EXCEPTION 'game % is not a WAD campaign game', p_game_id USING ERRCODE = '22023';
     END IF;
 
-    PERFORM doom.tick_inputs(p_game_id, p_inputs);
+    tick_number := doom.tick_inputs(p_game_id, p_inputs);
     SELECT game.finished_at_tick IS NOT NULL INTO STRICT map_finished
     FROM doom.games AS game WHERE game.game_id = p_game_id;
     IF map_finished THEN
         next_game := doom.advance_wad_campaign(p_game_id);
     END IF;
+    IF next_game IS NOT NULL THEN
+        -- The acknowledgement describes the map the client should use next.
+        SELECT game.tick_number INTO STRICT tick_number
+        FROM doom.games AS game WHERE game.game_id = next_game;
+    END IF;
 
     game_id := coalesce(next_game, p_game_id);
     campaign_finished := map_finished AND next_game IS NULL;
+    RETURN NEXT;
+END;
+$$;
+
+CREATE FUNCTION doom.step_wad_campaign(
+    p_game_id bigint, p_width integer, p_height integer, p_inputs doom.input_command[]
+)
+RETURNS TABLE (game_id bigint, campaign_finished boolean, frame bytea)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    SELECT ack.game_id, ack.campaign_finished INTO STRICT game_id, campaign_finished
+    FROM doom.tick_wad_campaign(p_game_id, p_inputs) AS ack;
     frame := doom.render_compact(game_id, p_width, p_height);
     RETURN NEXT;
 END;
