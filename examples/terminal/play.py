@@ -35,20 +35,24 @@ async def first(*coroutines):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def menu(keys, display, title, items, *, picture=None, adjust=None, hint=None):
+async def menu(keys, display, title, items, *, picture=None, adjust=None, animate=False):
     """Return the selected row, or None on Escape."""
     keys.set_menu(True)
     selected = 0
     last = None
     while not keys.quit.is_set():
         rows = items() if callable(items) else items
-        layout = (shutil.get_terminal_size(), tuple(rows), selected)
+        now = monotonic()
+        phase = int(now * 10) if animate else None
+        lit = keys.lit_keys(now)
+        layout = (shutil.get_terminal_size(), tuple(rows), selected, phase, lit)
         if layout != last:
-            options = {"hint": hint} if hint else {}
-            display.menu(title, rows, selected, art=picture, **options)
+            display.menu(
+                title, rows, selected, art=picture, phase=phase, adjustable=adjust is not None, lit_keys=lit
+            )
             last = layout
         try:
-            key = await asyncio.wait_for(keys.menu_keys.get(), 0.2)
+            key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35 if lit else 0.1)
         except TimeoutError:
             continue
         if key in ("q", "esc", "end"):
@@ -89,7 +93,7 @@ async def new_game_menu(args, maps, display, keys):
             items,
             picture=display.art.title,
             adjust=adjust,
-            hint="Up/Down  select    Left/Right  change    Enter  confirm",
+            animate=True,
         )
         if row != 3:
             return row == 0
@@ -144,6 +148,7 @@ async def play_session(session, display, keys, maps):
                 turn,
                 session.fps(now),
                 shot_age=age,
+                lit_keys=keys.lit_keys(now),
             )
         try:
             key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35)
