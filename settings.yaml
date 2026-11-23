@@ -1,13 +1,24 @@
+# ./play reads these settings when it starts the local database.
 services:
   db:
-    # cpu cores: 0.0625 is 1/16 of a core. use 0.01 up to docker's cpu count, or 0 for no cap.
+    # vcpus: 0.01 up to the number available to docker, or 0 for unlimited.
+    # 0.0625 gives postgres 1/16 of one core.
     cpus: 0.0625
-    # memory cap: docker accepts 6m or more. for postgres, try 256m, 512m or 1g.
+
+    # ram: 6m or more. examples for postgres: 256m, 512m, 1g.
     mem_limit: &ram 512m
-    # total ram plus swap. matching the memory cap disables swap.
+
+    # ram + swap: *ram disables swap. with 512m ram, 1g allows 512m of swap.
+    # use a value at least as large as ram, or -1 for unlimited swap.
     memswap_limit: *ram
 
   play:
     environment:
-      # added delay per gameplay query, in ms. use 0 (off), 50 (benchmark), or any finite nonnegative value.
-      DOOM_RTT_MS: "0"
+      # extra round-trip delay per gameplay query, in milliseconds. 0 disables it.
+      # any finite number >= 0. 46 adds 23 ms each way.
+      DOOM_RTT_MS: "46"
+
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: doom
+      PGPASSWORD: doom

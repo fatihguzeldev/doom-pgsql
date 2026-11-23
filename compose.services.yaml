@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: doom
+      POSTGRES_PASSWORD: doom
+    volumes:
+      - games:/var/lib/postgresql/data
+      - ./install.sql:/app/install.sql:ro
+      - ./engine:/app/engine:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-d", "doom", "-U", "postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+
+  play:
+    build: .
+    volumes:
+      - ./examples/terminal:/app/examples/terminal:ro
+      - type: bind
+        source: ${DOOM_WAD_PATH:-./assets/doom1.wad}
+        target: /app/assets/doom1.wad
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  games:

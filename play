@@ -51,6 +51,8 @@ SELECT to_regnamespace('doom') IS NULL AS install \gset
 \i /app/install.sql
 \endif
 SQL
+else
+    compose=(docker compose -f "$repo/compose.services.yaml")
 fi
 
 # Docker Desktop cannot play PCM on the host's speakers.

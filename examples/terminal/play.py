@@ -233,11 +233,18 @@ async def play(args, keys):
                 previous_game = state["game"]
 
 
+def local_rtt_ms(dsn, override):
+    if dsn is not None:
+        return 0.0
+    rtt = float(override if override is not None else os.environ.get("DOOM_RTT_MS", "0"))
+    if not math.isfinite(rtt) or rtt < 0:
+        raise ValueError("expected a finite, nonnegative number")
+    return rtt
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--dsn", default="", help="PostgreSQL connection string (or use PG* environment variables)"
-    )
+    parser.add_argument("--dsn", help="PostgreSQL connection string (or use PG* environment variables)")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--wad", type=Path, help="use a classic WAD (default: bundled shareware)")
     source.add_argument("--game", type=int, help="resume an existing game by ID")
@@ -253,14 +260,16 @@ def main():
     )
     parser.add_argument(
         "--rtt-ms",
-        type=float,
-        default=os.environ.get("DOOM_RTT_MS", "0"),
-        help="add this many milliseconds per gameplay SQL round trip (default: DOOM_RTT_MS or 0)",
+        metavar="MS",
+        help="override the simulated round-trip delay for local play",
     )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
     args = parser.parse_args()
-    if not math.isfinite(args.rtt_ms) or args.rtt_ms < 0:
-        parser.error("--rtt-ms must be a finite, nonnegative number")
+    try:
+        args.rtt_ms = local_rtt_ms(args.dsn, args.rtt_ms)
+    except ValueError as error:
+        parser.error(f"invalid local RTT: {error}")
+    args.dsn = args.dsn or ""
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")
 
