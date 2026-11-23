@@ -31,27 +31,30 @@ def hangar_commands():
     return commands
 
 
+def backend_cpu_ms(container, writer, reader):
+    if not container:
+        return {}
+    pids = (writer.info.backend_pid, reader.info.backend_pid)
+    paths = [f"/proc/{pid}/schedstat" for pid in pids]
+    rows = subprocess.check_output(["docker", "exec", container, "cat", *paths], text=True).splitlines()
+    return {lane: int(row.split()[0]) / 1e6 for lane, row in zip(("writer", "reader"), rows, strict=True)}
+
+
 def measure(dsn, game, seconds, rtt, container=None, commands=None):
-    barrier = threading.Barrier(3, timeout=30)
-    begin_work = threading.Event()
-    pids = {}
+    delay = rtt / 2000
     start = finish = 0.0
 
-    def backend_cpu():
-        if not container:
-            return {}
-        paths = [f"/proc/{pids[lane]}/schedstat" for lane in ("writer", "reader")]
-        rows = subprocess.check_output(["docker", "exec", container, "cat", *paths], text=True).splitlines()
-        return {lane: int(row.split()[0]) / 1e6 for lane, row in zip(("writer", "reader"), rows)}
+    def start_clock():
+        nonlocal start, finish
+        start = time.monotonic()
+        finish = start + seconds
 
-    delay = rtt / 2000
+    ready = threading.Barrier(2, action=start_clock, timeout=30)
 
     def inputs(writer):
         nonlocal finish
         timings, accepted = [], 0
-        epoch, initial = writer.execute("SELECT epoch,tic FROM doom.game_status(%s)", (game,)).fetchone()
-        barrier.wait()
-        begin_work.wait()
+        ready.wait()
         pending = 1
         while time.monotonic() < finish:
             now = time.monotonic()
@@ -86,9 +89,7 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
     def frames(reader):
         timings, pictures, fresh, repeated, sent = [], set(), 0, 0, 0
         token = None
-        (epoch,) = reader.execute("SELECT epoch FROM doom.game_status(%s)", (game,)).fetchone()
-        barrier.wait()
-        begin_work.wait()
+        ready.wait()
         while time.monotonic() < finish:
             now = time.monotonic()
             sent += 1
@@ -113,31 +114,20 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
         psycopg.connect(dsn, autocommit=True) as write_conn,
         psycopg.connect(dsn, autocommit=True) as read_conn,
     ):
-        pids.update(writer=write_conn.info.backend_pid, reader=read_conn.info.backend_pid)
+        epoch, initial = write_conn.execute("SELECT epoch,tic FROM doom.game_status(%s)", (game,)).fetchone()
+        before = backend_cpu_ms(container, write_conn, read_conn)
         with ThreadPoolExecutor(max_workers=2) as pool:
-            writer, reader = (
-                pool.submit(inputs, write_conn),
-                pool.submit(frames, read_conn),
-            )
-            try:
-                barrier.wait()
-                before = backend_cpu()
-                start = time.monotonic()
-                finish = start + seconds
-            finally:
-                begin_work.set()
-            tics, w = writer.result()
-            fresh, distinct, reused, f = reader.result()
-            after = backend_cpu()
-    if commands is not None:
-        elapsed = finish - start
-        if tics != len(commands):
-            raise RuntimeError(f"exit route timed out at tic {tics}")
-        with psycopg.connect(dsn) as conn:
-            if not conn.execute("SELECT finished FROM doom.game_status(%s)", (game,)).fetchone()[0]:
+            writer = pool.submit(inputs, write_conn)
+            reader = pool.submit(frames, read_conn)
+            tics, input_times = writer.result()
+            fresh, distinct, reused, frame_times = reader.result()
+        after = backend_cpu_ms(container, write_conn, read_conn)
+        if commands is not None:
+            if tics != len(commands):
+                raise RuntimeError(f"exit route timed out at tic {tics}")
+            if not write_conn.execute("SELECT finished FROM doom.game_status(%s)", (game,)).fetchone()[0]:
                 raise RuntimeError("the replay did not finish Hangar")
-    else:
-        elapsed = seconds
+    elapsed = seconds if commands is None else finish - start
     cpu = {lane: round(after[lane] - ms, 3) for lane, ms in before.items()}
     return {
         "backend_cpu_ms_including_drain": cpu,
@@ -149,8 +139,8 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
         "unique_images": distinct,
         "unique_fps": distinct / elapsed,
         "reused": reused,
-        "median_frame_request_ms": statistics.median(f) if f else None,
-        "median_input_batch_ms": statistics.median(w) if w else None,
+        "median_frame_request_ms": statistics.median(frame_times) if frame_times else None,
+        "median_input_batch_ms": statistics.median(input_times) if input_times else None,
     }
 
 
