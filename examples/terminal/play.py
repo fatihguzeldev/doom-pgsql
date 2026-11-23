@@ -78,10 +78,12 @@ def screen(keyboard):
 
 class Display:
     def __init__(self):
+        self.last_turn = 0.0
         self.frame = None
         self.palette = None
 
     def paint(self, turn=0):
+        self.last_turn = turn
         frame = self.frame
         w, h = frame['width'], frame['height']
         cols, lines = shutil.get_terminal_size()
@@ -219,6 +221,8 @@ async def play(args):
                         if frame['pixels'] is not None:
                             display.frame = frame
                             display.paint(sum(turns.values()) if args.predict_turn else 0)
+                        elif args.predict_turn and display.frame and display.last_turn != sum(turns.values()):
+                            display.paint(sum(turns.values()))
                         token = frame['token']
                         if frame['finished']:
                             keys.quit.set()

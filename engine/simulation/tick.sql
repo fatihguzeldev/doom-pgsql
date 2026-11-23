@@ -14,6 +14,7 @@ DECLARE
     target_id int;
     damage int := 0;
     matrix bytea;
+    bit_index bigint;
     sectors int;
 BEGIN
     IF NOT (cmd IS NOT NULL) OR gid IS NULL OR generation IS NULL OR n IS NULL OR n<1
@@ -35,6 +36,7 @@ BEGIN
     IF player.health<=0 THEN RETURN n; END IF;
     player.yaw := player.yaw+turn;
     player.yaw := player.yaw-floor(player.yaw/(2*pi()))*(2*pi());
+    IF turn<>0 THEN UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1; END IF;
     facing := point(cos(player.yaw),sin(player.yaw));
     IF use_line OR (fire AND g.ammo>0 AND g.next_shot<=n) THEN
         FOR contact IN SELECT t.*,l.special FROM doom.trace(g.level,gid,player.pos,
@@ -44,6 +46,7 @@ BEGIN
         LOOP
             IF contact.special<>0 AND use_line AND contact.t*(CASE WHEN fire THEN 1024 ELSE 64 END)<=64 THEN
                 PERFORM doom.activate(g,contact.line,'use'); use_line:=false;
+                IF EXISTS(SELECT FROM doom.games WHERE id=gid AND finished) THEN RETURN n; END IF;
             END IF;
             IF contact.blocked THEN
                 dist:=contact.t*CASE WHEN fire THEN 1024 ELSE 64 END;
@@ -73,15 +76,16 @@ BEGIN
         END IF;
         IF loc.pos IS NOT NULL THEN
             UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z WHERE game=gid AND id=-1;
-            FOR contact IN SELECT l.id FROM doom.lines l WHERE l.level=g.level AND l.special<>0
+            FOR contact IN SELECT l.id,l.special FROM doom.lines l WHERE l.level=g.level AND l.special<>0
                 AND box(l.a,l.b) && box(before_pos,loc.pos) AND lseg(l.a,l.b) ?# lseg(before_pos,loc.pos)
                 ORDER BY (lseg(l.a,l.b) # lseg(before_pos,loc.pos)) <-> before_pos,l.id LOOP
                 PERFORM doom.activate(g,contact.id,'cross');
+                IF contact.special IN (52,124) THEN RETURN n; END IF;
+                EXIT WHEN contact.special IN (39,97);
             END LOOP;
             SELECT pos,sector,z INTO player.pos,player.sector,player.z FROM doom.actors WHERE game=gid AND id=-1;
         END IF;
     END IF;
-    IF turn<>0 THEN UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1; END IF;
     FOR contact IN DELETE FROM doom.actors a WHERE a.game=gid AND a.role='pickup' AND a.sector=player.sector
         AND a.cell_x BETWEEN floor((player.pos[0]-24)/128)::int AND floor((player.pos[0]+24)/128)::int
         AND a.cell_y BETWEEN floor((player.pos[1]-24)/128)::int AND floor((player.pos[1]+24)/128)::int
@@ -103,8 +107,9 @@ BEGIN
             SELECT sector_count,CASE WHEN NOT EXISTS(SELECT FROM doom.movers WHERE game=gid) THEN reject END
             INTO sectors,matrix FROM doom.levels WHERE id=g.level;
         END IF;
+        bit_index:=foe.sector::bigint*sectors+player.sector;
         CONTINUE WHEN matrix IS NOT NULL AND foe.sector BETWEEN 0 AND sectors-1 AND player.sector BETWEEN 0 AND sectors-1
-            AND get_bit(matrix,foe.sector*sectors+player.sector)=1;
+            AND (get_byte(matrix,(bit_index/8)::int) & (1 << (bit_index%8)::int))<>0;
         CONTINUE WHEN EXISTS(SELECT FROM doom.trace(g.level,gid,foe.pos,delta,foe.sector,foe.z+32) WHERE blocked);
         IF dist<128 THEN damage:=damage+4;
             UPDATE doom.actors SET awake_at=n+24,yaw=atan2(delta[1],delta[0]) WHERE game=gid AND id=foe.id;

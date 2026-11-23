@@ -27,6 +27,7 @@ BEGIN
             JOIN doom.sectors r ON r.level=s.level AND r.id=doom.sector_at(s.level,s.pos)
             WHERE s.level=g.level AND s.thing=14 AND r.tag=l.tag ORDER BY s.id LIMIT 1) dst
         WHERE a.game=g.id AND a.id=-1;
+        IF FOUND AND l.special=39 THEN INSERT INTO doom.used_lines VALUES(g.id,line_no); END IF;
         RETURN;
     END IF;
     IF l.special=35 AND mode='cross' THEN
