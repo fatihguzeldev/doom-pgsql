@@ -6,17 +6,16 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+from examples.terminal.ansi import SGR, cell_width
 from examples.terminal.art import Image
 from examples.terminal.automap import Automap
-from examples.terminal.display import (
+from examples.terminal.display import Display
+from examples.terminal.widgets import (
     KEY_AMBER,
     KEY_CYAN,
     KEY_FACE,
     KEY_INK,
-    SGR,
-    Display,
-    _cells,
-    _control_rows,
+    control_rows,
 )
 
 
@@ -27,8 +26,8 @@ def key_positions(rows):
     for y, (_, row) in enumerate(rows):
         for match in pattern.finditer(row):
             face, label = match.groups()
-            x = _cells(SGR.sub("", row[: match.start()]))
-            positions[label.strip()] = (x, y, _cells(label), face)
+            x = cell_width(SGR.sub("", row[: match.start()]))
+            positions[label.strip()] = (x, y, cell_width(label), face)
     return positions
 
 
@@ -51,7 +50,7 @@ class KeycapsTest(unittest.TestCase):
                     for x, styled in sorted(row):
                         text = SGR.sub("", styled)
                         self.assertGreaterEqual(x, right)
-                        right = x + _cells(text)
+                        right = x + cell_width(text)
                         self.assertLessEqual(right, width)
                         plain.append(text)
                 self.assertTrue(any("AUTOMAP" in s for s in plain))
@@ -62,7 +61,7 @@ class KeycapsTest(unittest.TestCase):
         pressed = {"w", "a", "right", "l", " ", "e"}
         for width in (58, 78, 114):
             with self.subTest(width=width):
-                keys = key_positions(_control_rows(width, False, pressed))
+                keys = key_positions(control_rows(width, False, pressed))
                 self.assertEqual(set(keys), set("WASDJLERQ") | {"↑", "↓", "←", "→", "SPACE", "Esc"})
                 for top, left, center, right in (("W", "A", "S", "D"), ("↑", "←", "↓", "→")):
                     self.assertEqual(keys[top][0], keys[center][0])
@@ -80,12 +79,12 @@ class KeycapsTest(unittest.TestCase):
 
     def test_latched_auto_walk_keeps_key_positions(self):
         for width in range(1, 135):
-            idle = _control_rows(width, False, ())
-            latched = _control_rows(width, True, ())
+            idle = control_rows(width, False, ())
+            latched = control_rows(width, True, ())
             self.assertEqual(key_positions(idle), key_positions(latched), width)
             self.assertEqual([w for w, _ in idle], [w for w, _ in latched], width)
             for row_width, line in latched:
-                self.assertEqual(row_width, _cells(SGR.sub("", line)))
+                self.assertEqual(row_width, cell_width(SGR.sub("", line)))
                 self.assertLessEqual(row_width, width)
             if width >= 58:
                 self.assertIn("AUTO-WALK", latched[-1][1])
@@ -116,7 +115,7 @@ class KeycapsTest(unittest.TestCase):
             with patch("shutil.get_terminal_size", return_value=size), redirect_stdout(io.StringIO()):
                 display.paint(WORLD, STATUS, lit_keys={"left", " "})
             world = [
-                (x, y, _cells(SGR.sub("", line)))
+                (x, y, cell_width(SGR.sub("", line)))
                 for y, row in enumerate(display._previous)
                 for x, line in row
                 if "48;2;3;5;7m" in line
