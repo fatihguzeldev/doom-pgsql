@@ -3,3 +3,4 @@
 \ir world.sql
 \ir raster.sql
 \ir play.sql
+\ir visibility.sql
