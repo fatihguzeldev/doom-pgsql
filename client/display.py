@@ -106,7 +106,7 @@ class Display:
         )
 
     def paint(
-        self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset(),
+        self, world, status, turn=0.0, fps=0.0, shot_age=None, *, phase=0, lit_keys=frozenset(),
         automap=None, pose=None,
     ):
         page = Page()
@@ -143,9 +143,7 @@ class Display:
         x = (page.width - cols - (map_width + 2 if side else 0)) // 2
         y = ((page.height - rows) // 2 if not has_map
              else header + (usable - rows - below_map) // 2)
-        readout = f"FPS {fps:.1f}"
-        if sql_fps is not None:
-            readout += f"   SQL {sql_fps:.1f}"
+        readout = "FPS —" if fps is None else f"FPS {fps:.1f}".removesuffix(".0")
         if compact:
             span = cols + (map_width + 2 if side else 0)
             if span >= len(readout) + 12:

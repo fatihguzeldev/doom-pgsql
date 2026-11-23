@@ -16,6 +16,7 @@ from client.database import open_game
 from client.display import Display
 from client.keyboard import Keyboard, screen
 from client.menu import new_game_menu, pause_menu
+from client.presentation import FrameRate
 from client.session import Session
 from client.sound import pistol_sound
 from client.widgets import LOGO_HZ
@@ -44,19 +45,19 @@ async def loading_screen(display, target, started):
 
 async def play_session(session, display, keys, maps, started):
     period = 1 / 60 if session.presenter is not None else 1 / 35
+    counter = FrameRate()
     while True:
         now = monotonic()
-        world, turn, fps, sql_fps = session.sample_view(now)
-        if world is not None and session.status:
+        view, turn = session.sample_view(now)
+        if view is not None and session.status:
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
                 age = None
             display.paint(
-                world,
+                view.image,
                 dict(session.status, auto_walk=keys.auto_walk),
                 turn,
-                fps,
-                sql_fps=sql_fps,
+                counter.sample(now, view, turn),
                 automap=session.state.get("automap"),
                 pose=session.pose,
                 shot_age=age,
@@ -78,6 +79,7 @@ async def play_session(session, display, keys, maps, started):
         if action != "resume":
             return action
         keys.set_menu(False)
+        counter = FrameRate()
         session.resume()
 
 

@@ -1,5 +1,4 @@
 import asyncio
-from collections import deque
 from time import monotonic
 
 import psycopg
@@ -7,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from .art import world_image
 from .database import Frames, connect, game_query
-from .presentation import Presenter
+from .presentation import Presenter, View
 
 
 class Session:
@@ -17,7 +16,7 @@ class Session:
         low_resolution = engine is not None and not getattr(args, "detail", False)
         self.frames = Frames(state, args.delta, low_resolution=low_resolution)
         self.presenter = Presenter(engine) if engine is not None else None
-        self.world = None
+        self.view = None
         self.pose = None
         self.active = asyncio.Event()
         self.active.set()
@@ -25,25 +24,17 @@ class Session:
         self.turns = {}
         self.status = None
         self.ended = False
-        self._arrivals = deque()
         self.last_shot = None
         self._next_shot = state["next_shot"]
         self.predict_turn = args.predict_turn
 
-    def fps(self, now):
-        while self._arrivals and self._arrivals[0] <= now - 1:
-            self._arrivals.popleft()
-        return len(self._arrivals)
-
     def sample_view(self, now):
-        sql_fps = self.fps(now)
         if self.presenter is None:
             turn = sum(self.turns.values()) if self.predict_turn else 0
-            return self.world, turn, sql_fps, None
+            return self.view, turn
         yaw = self.pose[2] if self.pose is not None else None
         turns = (*self.turns.values(), self.keys.pending_turn(now))
-        view = self.presenter.sample(now, yaw, turns)
-        return view.image if view is not None else None, 0, self.presenter.fps(now), sql_fps
+        return self.presenter.sample(now, yaw, turns), 0
 
     def pause(self):
         self.active.clear()
@@ -111,13 +102,12 @@ class Session:
                             continue
                         now = monotonic()
                         self.pose = (packet["camera_x"], packet["camera_y"], packet["yaw"])
-                        if changed:
-                            self._arrivals.append(now)
-                            self.world = world_image(self.frames.frame, self.frames.palette)
-                            if self.presenter is not None:
-                                if self.frames.revision != prior_revision:
-                                    self.presenter.reset()
-                                self.presenter.submit(self.world, packet["tic"], now, packet["yaw"])
+                        image = world_image(self.frames.frame, self.frames.palette) if changed else self.view.image
+                        self.view = View(image, packet["tic"], 1, packet["yaw"])
+                        if self.presenter is not None:
+                            if self.frames.revision != prior_revision:
+                                self.presenter.reset()
+                            self.presenter.submit(image, packet["tic"], now, packet["yaw"])
                         for tic in tuple(self.turns):
                             if tic <= packet["tic"]:
                                 del self.turns[tic]

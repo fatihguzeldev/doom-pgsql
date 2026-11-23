@@ -16,6 +16,27 @@ class View:
     yaw: float | None = None
 
 
+class FrameRate:
+    def __init__(self):
+        self._start = None
+        self._count = 0
+        self._view = None
+        self._turn = 0
+        self._rate = None
+
+    def sample(self, now, view, turn):
+        if self._start is None:
+            self._start = now
+        elif view is not self._view or turn != self._turn:
+            self._count += 1
+        self._view, self._turn = view, turn
+        elapsed = now - self._start
+        if elapsed >= 1:
+            self._rate = self._count / elapsed
+            self._start, self._count = now, 0
+        return self._rate
+
+
 # two input tics limit the exposed edge during a turn
 MAX_PREVIEW = 0.18
 
@@ -56,7 +77,6 @@ class Presenter:
         self._current = None
         self._displayed = None
         self._turn = 0
-        self._shown = deque()
 
     def reset(self):
         self._generation += 1
@@ -64,7 +84,6 @@ class Presenter:
         self._turn = 0
         self._ready.clear()
         self._schedule.clear()
-        self._shown.clear()
 
     def submit(self, image, tic, arrived, yaw=None):
         self._latest = (image, tic, arrived, yaw)
@@ -90,6 +109,10 @@ class Presenter:
             last_gap = gap
             if previous is not None and previous[0].rgb == image.rgb and previous[3] == yaw:
                 previous = current
+                # reuse the finished frame without interrupting a pair still on screen
+                if not self._schedule and self._current is not None:
+                    repeat = View(self._current.image, tic, 1, yaw)
+                    self._schedule.append((arrived, repeat))
                 continue
             start_yaw = previous[3] if previous is not None else yaw
             if previous is None or stalled or image.rgb == previous[0].rgb:
@@ -137,14 +160,7 @@ class Presenter:
             if milliradians:
                 image = _turn_view(current.image, milliradians)
                 view = View(image, current.tic, current.fraction, current.yaw + milliradians / 1000)
-            if self._displayed is None or view.image.rgb != self._displayed.image.rgb:
-                self._shown.append(now)
             self._current = current
             self._displayed = view
             self._turn = milliradians
         return self._displayed
-
-    def fps(self, now):
-        while self._shown and self._shown[0] <= now - 1:
-            self._shown.popleft()
-        return len(self._shown)

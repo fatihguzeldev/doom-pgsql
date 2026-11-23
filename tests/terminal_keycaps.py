@@ -95,7 +95,7 @@ class KeycapsTest(unittest.TestCase):
             with redirect_stdout(io.StringIO()) as initial:
                 display.paint(WORLD, STATUS)
             self.assertIn("HP 100%", initial.getvalue())
-            self.assertIn("FPS 0.0", initial.getvalue())
+            self.assertIn("FPS 0", initial.getvalue())
             with redirect_stdout(io.StringIO()) as down:
                 display.paint(WORLD, STATUS, lit_keys={"w", " "})
             self.assertIn(KEY_CYAN, down.getvalue())
@@ -107,6 +107,15 @@ class KeycapsTest(unittest.TestCase):
             for update in (down, released):
                 self.assertNotIn("48;2;3;5;7m", update.getvalue())
                 self.assertNotIn("HP 100%", update.getvalue())
+
+    def test_single_fps_label_keeps_only_meaningful_decimals(self):
+        display = Display()
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))):
+            for fps, expected in ((None, "FPS —"), (12.0, "FPS 12"), (5.83, "FPS 5.8")):
+                with redirect_stdout(io.StringIO()):
+                    display.paint(WORLD, STATUS, fps=fps)
+                labels = [SGR.sub("", line) for row in display._previous for _, line in row if "FPS" in line]
+                self.assertEqual(labels, [expected])
 
     def test_viewport_stays_centered_above_controls(self):
         display = Display()
@@ -126,7 +135,7 @@ class KeycapsTest(unittest.TestCase):
             self.assertLessEqual(abs(top - (height - top - len(world))), 1)
             header = display._previous[:top]
             self.assertFalse(header[-1])
-            self.assertEqual([SGR.sub("", line) for _, line in header[-2]], ["FPS 0.0"])
+            self.assertEqual([SGR.sub("", line) for _, line in header[-2]], ["FPS 0"])
             if height >= 22:
                 self.assertFalse(header[-3])
 
