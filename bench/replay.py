@@ -72,7 +72,7 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
             time.sleep(delay)
             (acknowledged,) = writer.execute(
                 "CALL doom.submit(%s,%s,%s,%s)",
-                (game, epoch, initial + pending, Jsonb(batch)),
+                (game, writer_epoch, initial + pending, Jsonb(batch)),
             ).fetchone()
             time.sleep(delay)
             if time.monotonic() <= finish:
@@ -96,7 +96,7 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
             time.sleep(delay)
             pic, light, token = reader.execute(
                 "SELECT pixels,shades,token FROM doom.poll_frame(%s,%s,%s,%s)",
-                (game, epoch, sent, token),
+                (game, reader_epoch, sent, token),
                 binary=True,
             ).fetchone()
             time.sleep(delay)
@@ -114,7 +114,9 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
         psycopg.connect(dsn, autocommit=True) as write_conn,
         psycopg.connect(dsn, autocommit=True) as read_conn,
     ):
-        epoch, initial = write_conn.execute("SELECT epoch,tic FROM doom.game_status(%s)", (game,)).fetchone()
+        # warm both backends before sampling cpu and starting the replay clock
+        writer_epoch, initial = write_conn.execute("SELECT epoch,tic FROM doom.game_status(%s)", (game,)).fetchone()
+        (reader_epoch,) = read_conn.execute("SELECT epoch FROM doom.game_status(%s)", (game,)).fetchone()
         before = backend_cpu_ms(container, write_conn, read_conn)
         with ThreadPoolExecutor(max_workers=2) as pool:
             writer = pool.submit(inputs, write_conn)
