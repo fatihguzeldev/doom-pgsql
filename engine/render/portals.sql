@@ -105,10 +105,11 @@ END;
 $$;
 CREATE TRIGGER publish_rooms AFTER UPDATE OF revision ON doom.levels FOR EACH ROW EXECUTE FUNCTION doom.publish_rooms();
 CREATE TABLE doom.screen (
-    sky_angles float8[] NOT NULL, row_scale float8[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton)
+    sky_angles float8[] NOT NULL, row_scale float8[] NOT NULL, shade_runs bytea[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton)
 );
 INSERT INTO doom.screen SELECT ARRAY(SELECT atan((x-79.5)/80) FROM generate_series(0,159)x),
-    ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y),true;
+    ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y),
+    ARRAY(SELECT decode(repeat(lpad(to_hex(i),2,'0'),100),'hex') FROM generate_series(0,31)i),true;
 
 CREATE TYPE doom.stroke AS (
     x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int

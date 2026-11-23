@@ -165,6 +165,13 @@ DECLARE
     column_data bytea;
     column_light bytea;
     sample bytea;
+    prior_art int;
+    prior_column int;
+    prior_v float8;
+    prior_step float8;
+    prior_count int;
+    prior_sample bytea;
+    source_column int;
     opacity bytea;
     level_light int;
     zbuffer float8[]; -- Only allocated for columns with masked surfaces or sprites.
@@ -179,7 +186,7 @@ BEGIN
     SELECT g.epoch,g.tic,g.level INTO STRICT epoch,tic,p FROM doom.games g WHERE g.id=gid;
     SELECT * INTO STRICT body FROM doom.actors WHERE game=gid AND id=-1;
     IF epoch<>generation OR slot<0 THEN RAISE EXCEPTION 'invalid frame generation or slot' USING ERRCODE='22023'; END IF;
-    SELECT screen.row_scale INTO row_scale FROM doom.screen;
+    SELECT screen.row_scale,screen.shade_runs INTO row_scale,shade_run FROM doom.screen;
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
     SELECT least(32,length(lighting)/256)-1,revision INTO bands,rev FROM doom.levels WHERE id=p;
     camera_x:=body.pos[0]; camera_y:=-body.pos[1];
@@ -205,7 +212,6 @@ BEGIN
     FROM generate_series(first_art,(SELECT max(art) FROM unnest(strokes)))id_range
     LEFT JOIN (SELECT art,bool_or(kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch FROM unnest(strokes) GROUP BY art) used ON used.art=id_range
     LEFT JOIN doom.art a ON a.id=used.art;
-    SELECT array_agg(decode(repeat(lpad(to_hex(i),2,'0'),100),'hex') ORDER BY i) INTO shade_run FROM generate_series(0,bands)i;
     SELECT array_agg(x) INTO overlay_columns FROM (SELECT DISTINCT x FROM unnest(strokes) WHERE kind>=3) overlay_cols;
     FOREACH stroke IN ARRAY coalesce(strokes,'{}') LOOP
         IF stroke.x<>this_x THEN
@@ -238,10 +244,18 @@ BEGIN
         ELSE
             IF stroke.kind>=3 AND NOT (stroke.depth < ANY(zbuffer[stroke.y0:stroke.y1-1])) THEN CONTINUE; END IF;
             band:=CASE WHEN stroke.kind=2 THEN 0 ELSE least(bands,level_light+floor(stroke.depth/96)::int) END;
-            IF tex.stretched IS NOT NULL AND stroke.kind=1 AND stroke.dv BETWEEN 0.46 AND 0.54 THEN
+            source_column:=floor(stroke.u)::int;
+            IF stroke.kind=1 AND prior_art=stroke.art AND prior_column=source_column AND prior_v=stroke.v
+               AND prior_step=stroke.dv AND prior_count=n THEN
+                sample:=prior_sample;
+            ELSIF tex.stretched IS NOT NULL AND stroke.kind=1 AND stroke.dv BETWEEN 0.46 AND 0.54 THEN
                 sample:=doom.column_samples(tex.stretched,tex.w,tex.h*2,stroke.u,2*stroke.v,2*stroke.dv,n);
             ELSE
                 sample:=coalesce(doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n),substring(empty_column FOR n));
+            END IF;
+            IF stroke.kind=1 THEN
+                prior_art:=stroke.art; prior_column:=source_column; prior_v:=stroke.v;
+                prior_step:=stroke.dv; prior_count:=n; prior_sample:=sample;
             END IF;
             IF stroke.kind<3 THEN
                 column_data:=overlay(column_data PLACING sample FROM stroke.y0+1 FOR n);
@@ -261,8 +275,8 @@ BEGIN
         END IF;
     END LOOP;
     IF this_x>=0 THEN colors[this_x]:=column_data; lights[this_x]:=column_light; END IF;
-    SELECT string_agg(c,''::bytea ORDER BY i) INTO pixels FROM unnest(colors) WITH ORDINALITY b(c,i);
-    SELECT string_agg(c,''::bytea ORDER BY i) INTO shades FROM unnest(lights) WITH ORDINALITY b(c,i);
+    SELECT string_agg(c,''::bytea ORDER BY i),string_agg(l,''::bytea ORDER BY i) INTO pixels,shades
+    FROM unnest(colors,lights) WITH ORDINALITY b(c,l,i);
     width:=160; height:=100; frame_slot:=slot; RETURN NEXT;
 END;
 $$;
