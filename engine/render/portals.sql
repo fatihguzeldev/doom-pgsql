@@ -31,8 +31,8 @@ BEGIN
         CONTINUE WHEN line.k<=0;
         left_r:=CASE WHEN line.z0>=0.001 THEN line.r0/line.z0 ELSE (line.r0+(0.001-line.z0)*line.dr/line.dz)/0.001 END;
         right_r:=CASE WHEN z1>=0.001 THEN r1/z1 ELSE (r1+(0.001-z1)*line.dr/line.dz)/0.001 END;
-        line.lo:=greatest(win.lo,least(160,ceil(79.5+80*left_r))::int);
-        line.hi:=least(win.hi,greatest(-1,ceil(79.5+80*right_r)-1)::int);
+        line.lo:=greatest(win.lo,least(160,ceil(79.5+80*left_r)))::int;
+        line.hi:=least(win.hi,greatest(-1,ceil(79.5+80*right_r)-1))::int;
         CONTINUE WHEN line.lo>line.hi;
         line.inv0:=(line.dr+79.5/80*line.dz)/line.k;
         line.inv_step:=-line.dz/(80*line.k);
@@ -161,8 +161,8 @@ BEGIN
                 IF y0<y1 THEN
                     inverse:=wall.inv0+x*wall.inv_step; depth:=1/inverse; scale:=80*inverse; dv:=depth/80;
                     u:=e.u+e.len*greatest(0,least(1,((x-79.5)/80*wall.z0-wall.r0)/(inverse*wall.k)));
-                    top_y:=greatest(y0,least(y1,ceil(49.5+(eye-front.z_ceil)*scale)::int));
-                    bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)::int));
+                    top_y:=greatest(y0,least(y1,ceil(49.5+(eye-front.z_ceil)*scale)))::int;
+                    bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)))::int;
                     IF y0<top_y THEN
                         IF front.sky THEN RETURN NEXT (x,y0,top_y,2,front.ceil_id,
                             (body.yaw-sky_angles[1+x])*512/pi(),0,1,depth,255)::doom.stroke;
@@ -180,9 +180,9 @@ BEGIN
                         END IF;
                         top_clip[x]:=100; open_bits:=set_bit(open_bits,x,0);
                     ELSE
-                        bottom_open:=greatest(top_y,least(bottom_y,ceil(49.5+(eye-low_z)*scale)::int));
+                        bottom_open:=greatest(top_y,least(bottom_y,ceil(49.5+(eye-low_z)*scale)))::int;
                         top_open:=CASE WHEN front.sky AND back.sky AND low_z<high_z THEN top_y ELSE
-                            greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)::int)) END;
+                            greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)))::int END;
                         IF top_y<top_open THEN
                             origin_z:=front.z_ceil;
                             IF (e.flags&8)=0 THEN texture_h:=e.upper_h;

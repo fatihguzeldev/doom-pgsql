@@ -24,7 +24,7 @@ BEGIN
     FROM doom.games g JOIN doom.levels l ON l.id=g.level JOIN doom.actors a ON a.game=g.id AND a.id=-1 WHERE g.id=gid;
     IF generation IS DISTINCT FROM epoch OR slot IS NULL OR slot<0 THEN RAISE EXCEPTION 'invalid polling cursor' USING ERRCODE='22023'; END IF;
     -- The digest includes external SQL edits even when game.tic did not advance.
-    SELECT string_agg(ROW(a.id,a.sector,a.pos,a.z,a.art,CASE WHEN a.id=-1 THEN a.yaw END)::text,'|' ORDER BY a.id)
+    SELECT md5(string_agg(record_send(ROW(a.id,a.sector,a.pos,a.z,a.art,CASE WHEN a.id=-1 THEN a.yaw END)),''::bytea ORDER BY a.id))
     INTO people FROM doom.actors a WHERE a.game=gid AND (a.id=-1 OR a.art IS NOT NULL AND a.health>0);
     SELECT string_agg(ROW(m.sector,m.floor_z,m.ceiling_z)::text,'|' ORDER BY m.sector) INTO doors
     FROM doom.movers m WHERE m.game=gid;

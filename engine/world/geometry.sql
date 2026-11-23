@@ -34,6 +34,8 @@ CREATE TABLE doom.blockmap (
 );
 
 CREATE FUNCTION doom.compile_level(p bigint) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    root int;
 BEGIN
     -- Serializes rebuilds of the same level with publication of their revision.
     PERFORM 1 FROM doom.levels WHERE id=p FOR UPDATE;
@@ -62,13 +64,16 @@ BEGIN
         AND c.name=CASE WHEN s.ceiling_tex='F_SKY1' THEN doom.sky_name(l.name) ELSE s.ceiling_tex END
     WHERE s.level=p;
     -- A closed door can subsequently open. Connectivity includes all two-sided portals.
-    WITH RECURSIVE links AS MATERIALIZED (
-        SELECT DISTINCT m.sector,e.dest FROM doom.mesh m,unnest(m.edges)e WHERE m.level=p AND e.dest IS NOT NULL
-    ), reach(root,id) AS (
-        SELECT m.sector,m.sector FROM doom.mesh m WHERE level=p
-        UNION SELECT r.root,l.dest FROM reach r JOIN links l ON l.sector=r.id)
-    UPDATE doom.mesh m SET component=c.root FROM (SELECT id,min(root) AS root FROM reach GROUP BY id)c
-    WHERE m.level=p AND m.sector=c.id;
+    LOOP
+        SELECT min(sector) INTO root FROM doom.mesh WHERE level=p AND component IS NULL;
+        EXIT WHEN root IS NULL;
+        WITH RECURSIVE reachable(id) AS (
+            SELECT root UNION
+            SELECT e.dest FROM reachable r JOIN doom.mesh m ON m.level=p AND m.sector=r.id
+            CROSS JOIN LATERAL unnest(m.edges)e WHERE e.dest IS NOT NULL
+        )
+        UPDATE doom.mesh SET component=root WHERE level=p AND sector IN (SELECT id FROM reachable);
+    END LOOP;
     DELETE FROM doom.blockmap WHERE level=p;
     INSERT INTO doom.blockmap
     SELECT p,c.x,c.y,array_agg(ROW(l.id,lseg(l.a,l.b),f.sector,b.sector,l.flags)::doom.boundary ORDER BY l.id)
@@ -98,6 +103,17 @@ BEGIN
     ELSIF TG_OP='DELETE' THEN SELECT array_agg(DISTINCT level) INTO ids FROM before_edit;
     ELSE SELECT array_agg(level ORDER BY level) INTO ids FROM
         (SELECT level FROM before_edit UNION SELECT level FROM after_edit) edited;
+    END IF;
+    IF TG_TABLE_NAME='sectors' AND TG_OP='UPDATE' THEN
+        IF NOT EXISTS(SELECT FROM before_edit b FULL JOIN after_edit a USING(level,id)
+            WHERE b.id IS NULL OR a.id IS NULL OR (a.floor_tex,a.ceiling_tex) IS DISTINCT FROM (b.floor_tex,b.ceiling_tex)) THEN
+            FOR p IN SELECT id FROM doom.levels WHERE ready AND id=ANY(ids) ORDER BY id FOR UPDATE LOOP
+                UPDATE doom.levels SET revision=revision+1,reject=CASE WHEN EXISTS(
+                    SELECT FROM before_edit b JOIN after_edit a USING(level,id) WHERE a.level=p
+                    AND (a.floor_z,a.ceiling_z) IS DISTINCT FROM (b.floor_z,b.ceiling_z)) THEN NULL ELSE reject END WHERE id=p;
+            END LOOP;
+            RETURN NULL;
+        END IF;
     END IF;
     FOR p IN SELECT id FROM doom.levels WHERE ready AND id=ANY(ids) ORDER BY id FOR UPDATE LOOP
         UPDATE doom.levels SET reject=NULL WHERE id=p;
