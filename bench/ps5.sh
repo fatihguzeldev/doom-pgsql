@@ -10,7 +10,8 @@ if docker inspect "$name" >/dev/null 2>&1; then exit 1; fi
 docker run -d --rm --name "$name" --memory=512m --memory-swap=512m \
     -p 127.0.0.1::5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17 >/dev/null
 trap 'docker stop "$name" >/dev/null' EXIT
-export PGHOST=127.0.0.1 PGUSER=postgres PGDATABASE=postgres
+unset PGHOSTADDR PGSERVICE PGOPTIONS
+export PGSSLMODE=disable PGHOST=127.0.0.1 PGUSER=postgres PGDATABASE=postgres
 PGPORT=$(docker port "$name" 5432/tcp | cut -d: -f2)
 export PGPORT
 attempt=0

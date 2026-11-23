@@ -7,6 +7,7 @@ import shutil
 import sys
 import termios
 import tty
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from psycopg.types.json import Jsonb
 class Keyboard:
     def __init__(self):
         self.until = {}
-        self.pressed = set()
+        self.pressed = Counter()
         self.buffer = b''
         self.quit = asyncio.Event()
 
@@ -41,7 +42,7 @@ class Keyboard:
             if key == 'q':
                 self.quit.set()
             elif key in ('e', ' '):
-                self.pressed.add(key)
+                self.pressed[key] += 1
             elif key in ('w', 's', 'a', 'd', 'j', 'l'):
                 self.until[key] = now + 0.14
 
@@ -50,7 +51,11 @@ class Keyboard:
             return self.until.get(key, 0) > now
         command = (held('w') - held('s'), held('a') - held('d'),
                    0.09 * (held('j') - held('l')), 'e' in self.pressed, ' ' in self.pressed)
-        self.pressed.clear()
+        for key in ('e', ' '):
+            if self.pressed[key]:
+                self.pressed[key] -= 1
+                if not self.pressed[key]:
+                    del self.pressed[key]
         return command
 
 
@@ -134,6 +139,9 @@ async def play(args):
     game, epoch, initial = state['game_id'], state['epoch'], state['tic']
     keys, display = Keyboard(), Display()
     pending = asyncio.Queue()
+    # Keep live controls close to the next executable tic when CPU is throttled.
+    # Sent inputs are retained verbatim until PostgreSQL confirms the batch.
+    capacity = asyncio.Semaphore(2)
     turns = {}
     clock = asyncio.get_running_loop().time
 
@@ -142,6 +150,7 @@ async def play(args):
         tick = initial
         while True:
             await asyncio.sleep(max(0,deadline-clock()))
+            await capacity.acquire()
             tick += 1
             cmd = keys.sample(clock())
             if cmd[2]:
@@ -149,7 +158,7 @@ async def play(args):
             pending.put_nowait((tick,cmd))
             if args.predict_turn and cmd[2] and display.frame:
                 display.paint(sum(turns.values()))
-            deadline += 1/35
+            deadline = max(clock(), deadline+1/35)
 
     async def send():
         batch = []
@@ -159,8 +168,10 @@ async def play(args):
                     while True:
                         if not batch:
                             batch.append(await pending.get())
+                            capacity.release()
                         while not pending.empty() and len(batch)<16:
                             batch.append(pending.get_nowait())
+                            capacity.release()
                         await conn.execute('CALL doom.submit(%s,%s,%s,%s)',
                                            (game,epoch,batch[0][0],Jsonb([v for _,v in batch])))
                         batch.clear()

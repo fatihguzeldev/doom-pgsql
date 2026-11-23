@@ -52,11 +52,14 @@ def measure(dsn, game, seconds, rtt, container=None):
                 continue
             batch = [route(n) for n in range(pending,last+1)]
             time.sleep(delay)
-            writer.execute('CALL doom.submit(%s,%s,%s,%s)',(game,epoch,initial+pending,Jsonb(batch)))
+            acknowledged, = writer.execute('CALL doom.submit(%s,%s,%s,%s)',
+                                           (game,epoch,initial+pending,Jsonb(batch))).fetchone()
             time.sleep(delay)
             if time.monotonic()<=finish:
-                accepted += len(batch)
+                accepted += max(0,min(last,acknowledged-initial)-pending+1)
                 timings.append(1000*(time.monotonic()-now))
+            if acknowledged < initial+last:
+                break
             pending = last+1
         return accepted,timings
 
