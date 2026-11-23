@@ -9,6 +9,7 @@ BEGIN
     INTO directory,catalog FROM doom.directory(wad) d;
     p := doom.read_map(wad,upper(map_name COLLATE "C"),catalog,directory);
     PERFORM doom.read_art(p,wad,catalog);
+    PERFORM doom.compile_level(p);
     UPDATE doom.levels SET ready=true WHERE id=p;
     RETURN p;
 END;
