@@ -13,9 +13,10 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from examples.terminal.art import Art
+from examples.terminal.database import open_game, saved_games
 from examples.terminal.display import Display
 from examples.terminal.keyboard import Keyboard, screen
-from examples.terminal.session import Session, open_game, saved_games
+from examples.terminal.session import Session
 from examples.terminal.sound import pistol_sound
 
 BUNDLED_WAD = Path(__file__).resolve().parents[2] / "assets" / "doom1.wad"
