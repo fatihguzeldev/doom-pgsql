@@ -70,8 +70,9 @@ RETURN int8send(
 
 CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea,stretched bytea);
 CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
-RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
-    WITH projected AS (
+RETURNS SETOF doom.stroke LANGUAGE plpgsql STABLE STRICT AS $$
+BEGIN
+    RETURN QUERY WITH projected AS (
         SELECT a.id,a.art,im.w,im.h,im.origin_x,im.origin_y,a.z,s.light,
             greatest(coalesce(m.floor_z,s.floor_z),a.z+im.origin_y-im.h) AS bottom,
             least(coalesce(m.ceiling_z,s.ceiling_z),a.z+im.origin_y) AS top,
@@ -93,12 +94,42 @@ RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
     FROM screen,LATERAL generate_series(greatest(0,least(160,ceil(left_x)))::int,
         greatest(-1,least(159,ceil(right_x)-1))::int)x
     WHERE y0<y1;
+END;
 $$;
 
 CREATE TYPE doom.plane_lut AS (depths float8[],bands bytea);
+CREATE TABLE doom.plane_tables (
+    level bigint REFERENCES doom.levels ON DELETE CASCADE, distance int, light int, lut doom.plane_lut NOT NULL,
+    PRIMARY KEY(level,distance,light)
+);
+CREATE FUNCTION doom.make_plane_lut(delta float8,light int,bands int,rays float8[])
+RETURNS doom.plane_lut LANGUAGE sql IMMUTABLE STRICT AS $$
+    SELECT ROW(array_agg(z ORDER BY y),decode(string_agg(lpad(to_hex(least(bands,(255-light)/8+floor(z/96)::int)),
+        2,'0'),'' ORDER BY y),'hex'))::doom.plane_lut
+    FROM unnest(rays) WITH ORDINALITY r(scale,y), LATERAL(SELECT delta*scale AS z) d;
+$$;
+CREATE FUNCTION doom.compile_plane_tables() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM doom.plane_tables WHERE level=NEW.id;
+    INSERT INTO doom.plane_tables
+    SELECT NEW.id,delta,light,doom.make_plane_lut(delta,light,least(32,length(NEW.lighting)/256)-1,s.row_scale)
+    FROM (
+        SELECT DISTINCT abs(altitude-target) AS delta,room.light
+        FROM doom.sectors room JOIN doom.mesh m ON m.level=room.level AND m.sector=room.id,
+        LATERAL (SELECT room.floor_z+41 AS altitude UNION
+            SELECT near.floor_z+41 FROM unnest(m.edges)e JOIN doom.sectors near ON near.level=NEW.id AND near.id=e.dest) camera,
+        LATERAL (VALUES(room.floor_z),(room.ceiling_z)) surface(target)
+        WHERE room.level=NEW.id
+    ) planes CROSS JOIN doom.screen s;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER compile_plane_tables AFTER UPDATE OF revision,lighting ON doom.levels
+FOR EACH ROW EXECUTE FUNCTION doom.compile_plane_tables();
+
 CREATE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea)
-LANGUAGE plpgsql STABLE STRICT SET jit=off AS $$
+LANGUAGE plpgsql STABLE STRICT SET jit=off SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     p bigint;
     body doom.actors;
@@ -159,13 +190,10 @@ BEGIN
         SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)
     ) s;
     -- Each plane has a single depth and light per scanline, across its entire width.
-    SELECT array_agg(key ORDER BY key),array_agg(ROW(ds,ramp)::doom.plane_lut ORDER BY key)
-    INTO plane_keys,planes FROM (
-        SELECT key,array_agg(projection.z ORDER BY y) AS ds,
-            decode(string_agg(lpad(to_hex(least(bands,(255-light)/8+floor(projection.z/96)::int)),2,'0'),'' ORDER BY y),'hex') AS ramp
-        FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) surfaces,
-        generate_series(0,99)y,LATERAL(SELECT abs(eye-v)*row_scale[y+1] AS z) projection GROUP BY key
-    ) luts;
+    SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
+    INTO plane_keys,planes
+    FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
+    LEFT JOIN doom.plane_tables t ON t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
     -- Read and detoast only the textures actually present in this view.
     SELECT min(art) INTO first_art FROM unnest(strokes);
     SELECT array_agg(CASE WHEN a.id IS NOT NULL THEN ROW(a.w,a.h,substring(a.pixels FROM 1),
