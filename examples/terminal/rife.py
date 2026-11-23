@@ -80,7 +80,22 @@ class Rife:
 
     @staticmethod
     def _upscale(rgb):
+        import numpy as np
+
         pixels = rgb.repeat(5, axis=0).repeat(5, axis=1)
+        h, w = rgb.shape[:2]
+        blocks = pixels.reshape(h, 5, w, 5, 3)
+        padded = np.pad(rgb, ((1, 1), (1, 1), (0, 0)), mode="edge")
+        top, bottom = padded[:-2, 1:-1], padded[2:, 1:-1]
+        left, right = padded[1:-1, :-2], padded[1:-1, 2:]
+        bend = (top != bottom).any(axis=2) & (left != right).any(axis=2)
+
+        # Scale2x's corner rule, limited to three samples of each 5×5 block.
+        for y, inner_y, vertical in ((0, 1, top), (4, 3, bottom)):
+            for x, inner_x, horizontal in ((0, 1, left), (4, 3, right)):
+                corner = (bend & (vertical == horizontal).all(axis=2))[..., None]
+                for row, col in ((y, x), (inner_y, x), (y, inner_x)):
+                    np.copyto(blocks[:, row, :, col], vertical, where=corner)
         return Image(320, 200, pixels.tobytes())
 
     def upscale(self, image):

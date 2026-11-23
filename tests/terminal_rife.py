@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import os
 import unittest
 from pathlib import Path
@@ -9,6 +10,23 @@ from examples.terminal.rife import Rife, _fetch
 
 
 class RifeModelsTest(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("numpy"), "requires numpy")
+    def test_upscale_keeps_source_colors_and_cuts_diagonal_corners(self):
+        import numpy as np
+
+        pixels = np.zeros((40, 64, 3), dtype=np.uint8)
+        ink = (220, 160, 100)
+        pixels[10, 11] = pixels[11, 10] = ink
+        pixels[20, 20] = ink
+        image = Rife._upscale(pixels)
+        rgb = np.frombuffer(image.rgb, dtype=np.uint8).reshape(200, 320, 3)
+        np.testing.assert_array_equal(rgb[2::5, 2::5], pixels)
+        expected = np.zeros((5, 5, 3), dtype=np.uint8)
+        expected[0, :2] = expected[1, 0] = ink
+        np.testing.assert_array_equal(rgb[55:60, 55:60], expected)
+        self.assertTrue((rgb[100:105, 100:105] == ink).all())
+        self.assertTrue(((rgb == 0).all(axis=2) | (rgb == ink).all(axis=2)).all())
+
     def test_verified_download_recovers_from_corrupt_cache(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
@@ -55,9 +73,8 @@ class RifeModelsTest(unittest.TestCase):
         for image in frames:
             self.assertEqual((image.width, image.height), (320, 200))
             blocks = np.frombuffer(image.rgb, dtype=np.uint8).reshape(40, 5, 64, 5, 3)
-            self.assertTrue((blocks == blocks[:, :1, :, :1]).all())
-            centers.append(np.where(blocks[:, 0, :, 0, 0] > 120)[1].mean())
-        np.testing.assert_array_equal(blocks[:, 0, :, 0], np.roll(pixels, 8, axis=1))
+            centers.append(np.where(blocks[:, 2, :, 2, 0] > 120)[1].mean())
+        np.testing.assert_array_equal(blocks[:, 2, :, 2], np.roll(pixels, 8, axis=1))
         for step in np.diff(centers):
             self.assertGreater(step, 0.4)
             self.assertLess(step, 2.8)
