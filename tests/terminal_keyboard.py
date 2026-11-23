@@ -7,6 +7,18 @@ from examples.terminal.keyboard import ESC_DELAY, Keyboard
 
 
 class KeyboardTest(unittest.IsolatedAsyncioTestCase):
+    def test_turn_can_be_previewed_before_input_queue_space_is_available(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b[106u\x1b[106;1:3u ", 1)
+        self.assertEqual(keys.pending_turn(1.2), 0.09)
+        command = keys.sample(1.2)
+        self.assertEqual((command[2], command[4]), (0.09, True))
+        self.assertEqual(keys.pending_turn(1.2), 0.0)
+        keys.feed(b"l", 2)
+        self.assertEqual(keys.pending_turn(2), -0.09)
+        keys.set_menu(True)
+        self.assertEqual(keys.pending_turn(2), 0.0)
+
     async def test_lit_physical_chord_and_short_taps(self):
         keys = Keyboard()
         keys.feed(b"\x1b[?11u\x1b[119u\x1b[A\x1b[106u\x1b[D\x1b[32u", 1)

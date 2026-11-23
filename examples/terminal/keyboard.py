@@ -58,6 +58,21 @@ class Keyboard:
         """Return physical controls held or briefly lit after a tap."""
         return frozenset(key for key, (held, until) in self._lights.items() if held or now < until)
 
+    def _active(self, now):
+        return self._down | self._taps | {k for k, expiry in self._until.items() if now < expiry}
+
+    @staticmethod
+    def _turn(active):
+        left = "j" in active or "left" in active
+        right = "l" in active or "right" in active
+        return 0.09 * (left - right)
+
+    def pending_turn(self, now):
+        # Preview a fresh press even while SQL is preventing the next input sample.
+        if self._taps.isdisjoint(("j", "left", "l", "right")):
+            return 0.0
+        return self._turn(self._active(now))
+
     def set_menu(self, enabled):
         self.in_menu = enabled
         self._clear_keys()
@@ -196,18 +211,17 @@ class Keyboard:
             self._quit()
 
     def sample(self, now):
-        active = self._down | self._taps | {k for k, expiry in self._until.items() if now < expiry}
+        active = self._active(now)
         back = "s" in active or "down" in active
         forward = "w" in active or "up" in active or (self.auto_walk and not back)
-        left = "j" in active or "left" in active
-        right = "l" in active or "right" in active
+        turn = self._turn(active)
         use = self._actions["e"] > 0
         fire = self._actions[" "] > 0 or " " in active
         self._taps.clear()
         for key in ("e", " "):
             if self._actions[key]:
                 self._actions[key] -= 1
-        return forward - back, ("a" in active) - ("d" in active), 0.09 * (left - right), use, fire
+        return forward - back, ("a" in active) - ("d" in active), turn, use, fire
 
 
 @contextmanager
