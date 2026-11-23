@@ -41,11 +41,11 @@ class Terminal:
 
 
 @contextmanager
-def client():
+def client(*args):
     master, slave = pty.openpty()
     try:
         termios.tcsetwinsize(slave, (30, 96))
-        cmd = [sys.executable, "-B", "-m", "examples.terminal.play", "--mute"]
+        cmd = [sys.executable, "-B", "-m", "examples.terminal.play", "--mute", *args]
         env = {k: v for k, v in os.environ.items() if k not in ("COLUMNS", "LINES")}
         with subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave, env=env) as proc:
             try:
@@ -81,12 +81,13 @@ def run():
         with db.transaction(), client() as (tty, proc):
             db.execute("LOCK TABLE doom.levels IN ACCESS EXCLUSIVE MODE")
             tty.until(b"New game")
+            tty.until(b"< E1M7 >")
             tty.send(b"\r")
-            tty.until(b"Loading E1M1")
+            tty.until(b"Loading E1M7")
             tty.until(b"1s    Q quit")
             tty.quit(proc)
 
-        with client() as (tty, proc):
+        with client("--map", "e1m1") as (tty, proc):
             tty.until(b"MAIN MENU")
             tty.until(b"New game")
             tty.send(b"\x1b[B\x1b[C")

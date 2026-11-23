@@ -209,7 +209,9 @@ async def play(args, keys):
     maps = art.maps
     if args.game is None and args.map and maps and args.map not in maps:
         raise ValueError(f"Map {args.map} not found in {path.name}")
-    args.map = args.map or ("E1M1" if "E1M1" in maps else next(iter(maps), "E1M1"))
+    if args.map is None:
+        preferred = "E1M7" if args.wad is None else "E1M1"
+        args.map = preferred if preferred in maps else next(iter(maps), "E1M1")
     if args.map not in maps:
         maps = (*maps, args.map)
     show_menu = args.game is None
@@ -262,9 +264,7 @@ def main():
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--wad", type=Path, help="use a classic WAD (default: bundled shareware)")
     source.add_argument("--game", type=int, help="resume an existing game by ID")
-    parser.add_argument(
-        "--map", type=str.upper, help="initial map (default: E1M1 or the first map in the WAD)"
-    )
+    parser.add_argument("--map", type=str.upper, help="initial map (default: E1M7 in the bundled WAD)")
     parser.add_argument(
         "--skill", type=int, choices=range(1, 6), default=3, help="initial difficulty (default: 3)"
     )

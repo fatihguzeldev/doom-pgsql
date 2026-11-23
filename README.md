@@ -6,7 +6,7 @@ doom, but the engine is rewritten in sql.
 ./play
 ```
 
-hit `enter` for e1m1, or pick a map and difficulty with the arrow keys. the shareware wad is included.
+hit `enter` for e1m7 (computer station), or pick a map and difficulty with the arrow keys. the shareware wad is included.
 
 ## controls
 
@@ -17,7 +17,7 @@ move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fir
 | flag | use |
 | --- | --- |
 | `--wad doom2.wad` | load a wad with its own maps and textures |
-| `--map e1m7` | start on a specific map |
+| `--map e1m1` | start on a specific map |
 | `--skill 3` | choose a difficulty from 1 to 5 (default 3) |
 | `--game 1` | resume a saved game by id |
 | `--dsn <connection>` | play on an existing postgres database with the engine installed |
