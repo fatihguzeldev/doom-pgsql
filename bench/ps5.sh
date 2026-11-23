@@ -1,8 +1,15 @@
 #!/bin/sh
-# Usage: PYTHON=path/to/python bench/ps5.sh doom1.wad [seconds]
+# Usage: PYTHON=path/to/python bench/ps5.sh doom1.wad [seconds] [E1M3|E1M1]
 set -eu
 wad=${1:?path to a shareware WAD required}
 duration=${2:-60}
+map=${3:-E1M3}
+set --
+case "$map" in
+    E1M3) ;;
+    E1M1) set -- --hangar-exit ;;
+    *) echo 'expected E1M3 or E1M1' >&2; exit 2 ;;
+esac
 python=${PYTHON:-python3}
 repo=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 name=doom-pgsql-bench-$$
@@ -24,12 +31,12 @@ docker update --cpu-period 100000 --cpu-quota 6250 "$name" >/dev/null
 limits=$(docker exec "$name" cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.max.burst /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.swap.max)
 [ "$limits" = "$(printf '6250 100000\n0\n536870912\n0')" ] || exit 1
 psql -Xq -f "$repo/install.sql"
-level=$("$python" - "$wad" <<'PY'
+level=$("$python" - "$wad" "$map" <<'PY'
 import psycopg,sys
 from pathlib import Path
 with psycopg.connect() as c:
-    print(c.execute("select doom.load_wad(%s,'E1M3')",(Path(sys.argv[1]).read_bytes(),)).fetchone()[0])
+    print(c.execute("select doom.load_wad(%s,%s)",(Path(sys.argv[1]).read_bytes(),sys.argv[2])).fetchone()[0])
 PY
 )
 psql -Xqc 'ANALYZE'
-"$python" -B "$repo/bench/replay.py" --level "$level" --seconds "$duration" --container "$name"
+"$python" -B "$repo/bench/replay.py" --level "$level" --seconds "$duration" --container "$name" "$@"
