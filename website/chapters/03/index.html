@@ -19,7 +19,21 @@
           <a href="../04/" aria-label="chapter 04"><span class="chapter-number">04</span></a>
         </nav>
       </header>
-      <article class="chapter-body" aria-label="chapter 03"></article>
+      <article class="chapter-body" aria-labelledby="chapter-03-heading">
+        <h1 class="visually-hidden" id="chapter-03-heading">chapter 03</h1>
+        <nav class="chapter-subnav" aria-label="chapter 03 sections">
+          <ol class="chapter-sections">
+            <li><a href="#section-01" aria-label="section 03.1"><span class="chapter-number">03.1</span></a></li>
+            <li><a href="#section-02" aria-label="section 03.2"><span class="chapter-number">03.2</span></a></li>
+          </ol>
+        </nav>
+        <section class="chapter-section" id="section-01" aria-labelledby="section-01-number" tabindex="-1">
+          <h2 class="chapter-number" id="section-01-number">03.1</h2>
+        </section>
+        <section class="chapter-section" id="section-02" aria-labelledby="section-02-number" tabindex="-1">
+          <h2 class="chapter-number" id="section-02-number">03.2</h2>
+        </section>
+      </article>
     </main>
   </body>
 </html>
