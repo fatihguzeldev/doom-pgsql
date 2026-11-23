@@ -2,4 +2,6 @@
 BEGIN;
 CREATE SCHEMA doom;
 \ir engine/wad/archive.sql
+\ir engine/world/schema.sql
+\ir engine/wad/map.sql
 COMMIT;

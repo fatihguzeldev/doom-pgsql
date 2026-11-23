@@ -46,3 +46,17 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+CREATE FUNCTION doom.lump_data(wad bytea, catalog jsonb, name text) RETURNS bytea
+LANGUAGE sql IMMUTABLE STRICT
+RETURN substring(wad FROM (catalog->name->>0)::int+1 FOR (catalog->name->>1)::int);
+
+CREATE FUNCTION doom.record_count(data bytea, stride int) RETURNS int
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    IF data IS NULL OR length(data)%stride<>0 THEN
+        RAISE EXCEPTION 'missing or incomplete %-byte WAD record',stride USING ERRCODE='22023';
+    END IF;
+    RETURN length(data)/stride;
+END;
+$$;
