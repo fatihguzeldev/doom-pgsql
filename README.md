@@ -12,6 +12,8 @@ press `enter` on `new game` to start. use the arrow keys to choose a map or diff
 
 move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fire and `e` to open doors or hit switches. `r` toggles auto-walk, `esc` pauses and `q` quits.
 
+on the minimap, `·` marks your trail and `⚑` marks an exit.
+
 ## flags
 
 | flag | use |

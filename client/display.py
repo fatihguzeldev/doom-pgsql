@@ -3,6 +3,7 @@ import sys
 
 from .ansi import BACKGROUND, SGR, Page, cell_width, fit_image, fit_text, image_rows
 from .art import Image
+from .automap import EXIT_FLAG
 from .widgets import (
     COPPER,
     EDGE,
@@ -162,7 +163,8 @@ class Display:
         if map_height > 0:
             mx = x + cols + 2 if side else (page.width - map_width) // 2
             my = y + (rows - map_height - 1) // 2 if side else below + 1
-            title = "AUTOMAP" + " " * (map_width - 10) + "N ↑"
+            label = f"AUTOMAP  {EXIT_FLAG} exit" if map_width >= 21 else "AUTOMAP"
+            title = label.ljust(map_width - 3) + "N ↑"
             page.put(mx, my, VIOLET + title)
             for i, row in enumerate(automap.rows(*pose, map_width, map_height), 1):
                 page.put(mx, my + i, row)

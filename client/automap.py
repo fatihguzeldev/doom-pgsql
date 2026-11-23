@@ -1,4 +1,5 @@
 import math
+from collections import deque
 
 # one braille character holds two columns of four map dots
 UNITS_PER_DOT = 24
@@ -11,8 +12,10 @@ _INK = (
     "\x1b[38;2;231;144;118m",
     "\x1b[38;2;255;210;128m",
     "\x1b[38;2;104;217;206m",
-    "\x1b[38;2;255;248;230m",
 )
+_TRAIL = "\x1b[38;2;147;157;200m"
+_PLAYER = "\x1b[38;2;255;248;230m"
+EXIT_FLAG = "⚑"
 _RESET_FG = "\x1b[39m"
 
 
@@ -51,6 +54,11 @@ class Automap:
         ]
         self._view = None
         self._rows = []
+        self._trail = deque(maxlen=32)
+        self._exits = [
+            (round((x0 + x1) / 2), round((y0 + y1) / 2))
+            for x0, y0, x1, y1, ink in self._lines if ink == _STYLES["exit"]
+        ]
 
     @classmethod
     async def load(cls, db, level):
@@ -84,6 +92,8 @@ class Automap:
         view = (cx, cy, direction, width, height)
         if view == self._view:
             return self._rows
+        if not self._trail or self._trail[-1] != (cx, cy):
+            self._trail.append((cx, cy))
 
         left, top = cx - width, cy - height * 2
         right, bottom = left + width * 2 - 1, top + height * 4 - 1
@@ -96,21 +106,35 @@ class Automap:
                 masks[cell] |= _DOTS[dy % 4][dx % 2]
                 inks[cell] = max(inks[cell], ink)
 
-        player = (height // 2) * width + width // 2
-        inks[player] = len(_INK) - 1
+        def cell_at(wx, wy):
+            if left <= wx <= right and top <= wy <= bottom:
+                return ((wy - top) // 4) * width + (wx - left) // 2
+            return None
+
+        markers = {}
+        for wx, wy in self._trail:
+            cell = cell_at(wx, wy)
+            if cell is not None and not masks[cell]:
+                markers[cell] = (_TRAIL, "·")
+        for wx, wy in self._exits:
+            cell = cell_at(wx, wy)
+            if cell is not None:
+                markers[cell] = (_INK[_STYLES["exit"]], EXIT_FLAG)
+        markers[cell_at(cx, cy)] = (_PLAYER, _HEADINGS[direction])
         rows = []
         for row in range(height):
             parts = []
-            current = 0
+            current = ""
             for cell in range(row * width, (row + 1) * width):
-                ink = inks[cell]
-                if ink and ink != current:
-                    parts.append(_INK[ink])
-                    current = ink
-                if cell == player:
-                    parts.append(_HEADINGS[direction])
+                if cell in markers:
+                    color, glyph = markers[cell]
                 else:
-                    parts.append(chr(0x2800 + masks[cell]) if ink else " ")
+                    color = _INK[inks[cell]]
+                    glyph = chr(0x2800 + masks[cell]) if masks[cell] else " "
+                if color and color != current:
+                    parts.append(color)
+                    current = color
+                parts.append(glyph)
             if current:
                 parts.append(_RESET_FG)
             rows.append("".join(parts))
