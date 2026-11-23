@@ -10,7 +10,6 @@ DECLARE
     fy float8;
 
     eye float8;
-    flat_colors bytea[];
     row_scale float8[]:=cam.row_scale;
     shade_runs bytea[]:=cam.shade_runs;
     stroke doom.stroke;
@@ -125,8 +124,7 @@ BEGIN
     -- Small exposed plane fragments cost less to sample than a screen transpose.
     dense_flats:=native AND plane_area>=10000;
     IF dense_flats THEN
-        flat_colors:=doom.flat_background(world,camera_x,camera_y,fx,fy,eye,row_scale);
-        colors[0:cam.w-1]:=flat_colors;
+        colors[0:cam.w-1]:=doom.flat_background(world,camera_x,camera_y,fx,fy,eye,row_scale);
     END IF;
     IF has_masks OR sprites IS NOT NULL THEN
         SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0) INTO strokes
@@ -147,11 +145,6 @@ BEGIN
     ELSIF background_only THEN
         scene_depth:=array_fill('Infinity'::float8,ARRAY[cam.w*cam.h]);
     END IF;
-    -- Depth and light are constant across each scanline of a plane.
-    SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
-    INTO plane_keys,planes
-    FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
-    LEFT JOIN doom.plane_tables t ON native AND t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
     IF full_wall THEN
         SELECT a.w,a.h,substring(a.pixels FROM 1),a.column_ids INTO tex.w,tex.h,tex.pixels,tex.column_ids
         FROM doom.art a WHERE a.id=solid_art;
@@ -182,22 +175,26 @@ BEGIN
             (SELECT string_agg(shade_runs[columns.band+1],''::bytea ORDER BY x) FROM columns)
         INTO pixels,shades;
         RETURN NEXT; RETURN;
-    ELSE
-        SELECT array_agg(a.id ORDER BY a.id),array_agg(ROW(a.w,a.h,substring(a.pixels FROM 1),
-            CASE WHEN used.masked THEN substring(a.mask FROM 1) END,
-            CASE WHEN used.stretch THEN substring(a.stretched FROM 1) END,
-            CASE WHEN used.lo IS NOT NULL THEN substring(a.quads FROM 1+16*a.h*slice.lo FOR 16*a.h*(1+slice.hi-slice.lo)) END,slice.lo,NULL,a.posts)::doom.tile ORDER BY a.id) INTO art_ids,bank
-        FROM (SELECT art,bool_or(s.kind>=3) AS masked,bool_or(s.kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch,
-            min(col) FILTER(WHERE ruler) AS lo,max(col) FILTER(WHERE ruler) AS hi
-            FROM unnest(strokes)s,
-                LATERAL(SELECT floor(s.u)::int AS col,native AND s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
-            WHERE s.kind>0 OR NOT dense_flats GROUP BY art) used
-        JOIN doom.art a ON a.id=used.art
-        CROSS JOIN LATERAL (SELECT CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
-                THEN ((used.lo%a.w)+a.w)%a.w ELSE 0 END AS lo,
-            CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
-                THEN ((used.hi%a.w)+a.w)%a.w ELSE a.w-1 END AS hi) slice;
     END IF;
+    -- Depth and light are constant across each scanline of a plane.
+    SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
+    INTO plane_keys,planes
+    FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
+    LEFT JOIN doom.plane_tables t ON native AND t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
+    SELECT array_agg(a.id ORDER BY a.id),array_agg(ROW(a.w,a.h,substring(a.pixels FROM 1),
+        CASE WHEN used.masked THEN substring(a.mask FROM 1) END,
+        CASE WHEN used.stretch THEN substring(a.stretched FROM 1) END,
+        CASE WHEN used.lo IS NOT NULL THEN substring(a.quads FROM 1+16*a.h*slice.lo FOR 16*a.h*(1+slice.hi-slice.lo)) END,slice.lo,NULL,a.posts)::doom.tile ORDER BY a.id) INTO art_ids,bank
+    FROM (SELECT art,bool_or(s.kind>=3) AS masked,bool_or(s.kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch,
+        min(col) FILTER(WHERE ruler) AS lo,max(col) FILTER(WHERE ruler) AS hi
+        FROM unnest(strokes)s,
+            LATERAL(SELECT floor(s.u)::int AS col,native AND s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
+        WHERE s.kind>0 OR NOT dense_flats GROUP BY art) used
+    JOIN doom.art a ON a.id=used.art
+    CROSS JOIN LATERAL (SELECT CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
+            THEN ((used.lo%a.w)+a.w)%a.w ELSE 0 END AS lo,
+        CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
+            THEN ((used.hi%a.w)+a.w)%a.w ELSE a.w-1 END AS hi) slice;
     IF has_masks OR sprites IS NOT NULL THEN
         SELECT array_agg(DISTINCT x) INTO overlay_columns FROM unnest(strokes) WHERE kind>=3;
     END IF;
