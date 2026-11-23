@@ -11,6 +11,7 @@ CREATE SCHEMA doom;
 \ir engine/simulation/trace.sql
 \ir engine/simulation/actions.sql
 \ir engine/simulation/tick.sql
+\ir engine/simulation/submit.sql
 \ir engine/render/portals.sql
 \ir engine/render/raster.sql
 COMMIT;
