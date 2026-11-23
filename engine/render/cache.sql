@@ -37,5 +37,4 @@ BEGIN
     RETURN NULL;
 END;
 $$;
-CREATE TRIGGER anchor_stationary AFTER UPDATE OF still_tics ON doom.games
-FOR EACH ROW WHEN (NEW.still_tics=4 AND OLD.still_tics<>4) EXECUTE FUNCTION doom.anchor_stationary_game();
+\ir stationary.sql

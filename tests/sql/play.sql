@@ -57,6 +57,11 @@ BEGIN
     ASSERT (SELECT pixels IS NULL FROM doom.poll_frame_low(g,1,2,packet.token));
     ASSERT (SELECT pixels=pic FROM doom.poll_frame(g,1,2,packet.token));
     SELECT game_id INTO other_game FROM doom.new_game(p);
+    UPDATE doom.games SET cache_stationary=false, still_tics=4 WHERE id=other_game;
+    ASSERT NOT EXISTS(SELECT FROM doom.view_cache WHERE game=other_game);
+    UPDATE doom.games SET cache_stationary=true, still_tics=0 WHERE id=other_game;
+    UPDATE doom.games SET still_tics=4 WHERE id=other_game;
+    ASSERT EXISTS(SELECT FROM doom.view_cache WHERE game=other_game);
     SELECT token INTO other_key FROM doom.poll_frame(other_game,1,1);
     UPDATE doom.actors SET game=other_game,id=77 WHERE game=g AND id=1;
     ASSERT (SELECT token<>key FROM doom.poll_frame(g,1,1,key));

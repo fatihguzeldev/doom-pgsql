@@ -76,13 +76,17 @@ async def open_game(args, wad, level=None, previous_game=None):
         else:
             game = args.game
         result = await db.execute(
-            """SELECT g.id AS game, g.level, g.epoch, g.tic, g.difficulty, g.next_shot, l.name AS map
+            """SELECT g.id AS game, g.*, l.name AS map
                FROM doom.games g JOIN doom.levels l ON l.id=g.level WHERE g.id=%s""",
             (game,),
         )
         state = await result.fetchone()
         if state is None:
             raise ValueError(f"Game {game} does not exist")
+        cache_stationary = not getattr(args, "rife", False)
+        if "cache_stationary" in state and state["cache_stationary"] != cache_stationary:
+            await db.execute("UPDATE doom.games SET cache_stationary=%s WHERE id=%s", (cache_stationary, game))
+            state["cache_stationary"] = cache_stationary
         state["automap"] = await Automap.load(db, state["level"])
         return state
 

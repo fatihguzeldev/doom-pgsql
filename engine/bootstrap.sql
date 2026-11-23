@@ -21,6 +21,13 @@ FROM pg_proc WHERE oid='doom.frame_palette(bigint)'::regprocedure \gset
 \ir render/palette.sql
 \endif
 \if :rife
+SELECT NOT EXISTS (SELECT FROM pg_attribute WHERE attrelid='doom.games'::regclass
+    AND attname='cache_stationary' AND NOT attisdropped) AS upgrade_stationary \gset
+\if :upgrade_stationary
+BEGIN;
+\ir render/stationary.sql
+COMMIT;
+\endif
 SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NULL AS install_low \gset
 \if :install_low
 BEGIN;
