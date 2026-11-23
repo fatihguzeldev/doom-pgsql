@@ -1,4 +1,4 @@
-![doom-pgsql](assets/logo.png)
+![doom-pgsql](assets/logo.gif)
 
 doom, but the engine is rewritten in sql.
 
