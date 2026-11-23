@@ -103,7 +103,7 @@ def run():
             ).fetchall()
             assert (name, ammo, skill) == ("E1M1", 49, 2) and cooldown > 0
 
-            tty.send(b"\x1b")
+            tty.send(b"\x13\x1b")
             tty.until(b"PAUSED")
             tty.until(b"Resume")
 

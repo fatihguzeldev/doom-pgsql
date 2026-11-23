@@ -230,6 +230,9 @@ def screen(keyboard):
     loop = asyncio.get_running_loop()
     try:
         tty.setcbreak(fd)
+        mode = termios.tcgetattr(fd)
+        mode[0] &= ~termios.IXON
+        termios.tcsetattr(fd, termios.TCSANOW, mode)
         loop.add_reader(fd, keyboard.receive)
         sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1004h\x1b[>11u\x1b[?u")
         sys.stdout.flush()
