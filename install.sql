@@ -8,6 +8,7 @@ CREATE SCHEMA doom;
 \ir engine/world/geometry.sql
 \ir engine/wad/load.sql
 \ir engine/simulation/game.sql
+\ir engine/simulation/edits.sql
 \ir engine/simulation/trace.sql
 \ir engine/simulation/actions.sql
 \ir engine/simulation/tick.sql

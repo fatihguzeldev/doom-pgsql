@@ -80,7 +80,7 @@ BEGIN
     FROM doom.lines l JOIN doom.sides f ON f.level=p AND f.id=l.front
     LEFT JOIN doom.sides b ON b.level=p AND b.id=l.back
     CROSS JOIN LATERAL doom.cells(l.a,l.b)c WHERE l.level=p GROUP BY c.x,c.y;
-    UPDATE doom.levels SET revision=revision+1 WHERE id=p;
+    UPDATE doom.levels SET revision=revision+1,geometry_revision=geometry_revision+1 WHERE id=p;
 END;
 $$;
 

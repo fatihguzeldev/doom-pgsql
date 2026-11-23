@@ -93,12 +93,11 @@ CREATE TABLE doom.room_catalog (
 CREATE FUNCTION doom.publish_rooms() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO doom.room_catalog
-    SELECT NEW.id,array_agg(CASE WHEN s.id IS NOT NULL THEN ROW(s.floor_z,s.ceiling_z,s.light,
-        b.floor_id,b.ceiling_id,b.sky)::doom.room END ORDER BY i)
+    SELECT NEW.id,coalesce(array_agg(CASE WHEN s.id IS NOT NULL THEN ROW(s.floor_z,s.ceiling_z,s.light,
+        b.floor_id,b.ceiling_id,b.sky)::doom.room END ORDER BY i),'{}'::doom.room[])
     FROM generate_series(0,(SELECT max(id) FROM doom.sectors WHERE level=NEW.id)) i
     LEFT JOIN doom.sectors s ON s.level=NEW.id AND s.id=i
     LEFT JOIN doom.mesh b ON b.level=NEW.id AND b.sector=i
-    HAVING count(*)>0
     ON CONFLICT(level) DO UPDATE SET rooms=excluded.rooms;
     RETURN NULL;
 END;

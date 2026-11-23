@@ -6,7 +6,8 @@ CREATE TABLE doom.levels (
     lighting bytea NOT NULL CHECK (length(lighting)>=256 AND length(lighting)%256=0),
     reject bytea,
     sector_count int NOT NULL,
-    revision bigint NOT NULL DEFAULT 1
+    revision bigint NOT NULL DEFAULT 1,
+    geometry_revision bigint NOT NULL DEFAULT 0
 );
 
 CREATE TYPE doom.surface AS ENUM ('wall','flat','sprite');

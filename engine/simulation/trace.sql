@@ -50,6 +50,10 @@ DECLARE
     path lseg:=lseg(body.pos,next_pos);
     seen int[]:='{}';
 BEGIN
+    IF dest<0 THEN
+        dest:=doom.sector_at(p,next_pos);
+        IF dest IS NULL THEN RETURN NULL; END IF;
+    END IF;
     FOR tile IN SELECT * FROM doom.blockmap b WHERE b.level=p
         AND b.x BETWEEN ceil((least(body.pos[0],next_pos[0])-body.radius)/128)::int-1
             AND floor((greatest(body.pos[0],next_pos[0])+body.radius)/128)::int
