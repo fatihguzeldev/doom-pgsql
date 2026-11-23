@@ -3,6 +3,8 @@ BEGIN;
 CREATE SCHEMA doom;
 \ir engine/wad/archive.sql
 \ir engine/world/schema.sql
+\ir engine/world/art.sql
+\ir engine/world/thing_types.sql
 \ir engine/wad/map.sql
 \ir engine/wad/images.sql
 \ir engine/world/geometry.sql
