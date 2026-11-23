@@ -1,4 +1,4 @@
-"""Run with python -m examples.terminal.play --wad doom1.wad --map E1M3."""
+"""python -m examples.terminal.play --wad doom1.wad --map E1M3"""
 
 import argparse
 import asyncio
@@ -95,7 +95,7 @@ class Display:
         w, h = frame["width"], frame["height"]
         cols, lines = shutil.get_terminal_size()
         cols, lines = max(1, cols - 1), max(1, lines - 1)
-        # A terminal cell contains two square samples. Fit with that aspect ratio.
+        # Each half-block character displays two pixel rows.
         scale = min(cols / w, 2 * lines / h)
         cols, lines = max(1, int(scale * w)), max(1, int(scale * h / 2))
         cos, sin = math.cos(turn), math.sin(turn)
@@ -155,8 +155,7 @@ async def play(args):
     game, epoch, initial = state["game_id"], state["epoch"], state["tic"]
     keys, display = Keyboard(), Display()
     pending = asyncio.Queue()
-    # Keep live controls close to the next executable tic when CPU is throttled.
-    # Sent inputs are retained verbatim until PostgreSQL confirms the batch.
+    # A long input queue would keep the player moving after key release.
     capacity = asyncio.Semaphore(2)
     turns = {}
     clock = asyncio.get_running_loop().time
@@ -177,6 +176,7 @@ async def play(args):
             deadline = max(clock(), deadline + 1 / 35)
 
     async def send():
+        # Retry the same tic numbers if the connection drops mid-batch.
         batch = []
         while True:
             try:
@@ -285,10 +285,8 @@ async def play(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Play SQL Doom in a truecolor terminal. libpq PG* variables are supported."
-    )
-    parser.add_argument("--dsn", default="")
+    parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
+    parser.add_argument("--dsn", default="", help="libpq connection string (or set PG* environment variables)")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--wad", type=Path)
     group.add_argument("--game", type=int)
@@ -296,7 +294,7 @@ def main():
     parser.add_argument("--skill", type=int, choices=range(1, 6), default=3)
     parser.add_argument("--delta", action="store_true", help="receive changed eight-column strips")
     parser.add_argument(
-        "--predict-turn", action="store_true", help="reproject the last SQL frame during local turns"
+        "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
     )
     args = parser.parse_args()
     if not sys.stdin.isatty() or not sys.stdout.isatty():
