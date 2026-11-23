@@ -3,7 +3,7 @@
 import math
 
 # One Braille character holds two columns of four map dots.
-UNITS_PER_DOT = 12
+UNITS_PER_DOT = 24
 _DOTS = ((1, 8), (2, 16), (4, 32), (64, 128))
 _HEADINGS = "→↗↑↖←↙↓↘"
 _STYLES = {"step": 1, "wall": 2, "special": 3, "exit": 4}

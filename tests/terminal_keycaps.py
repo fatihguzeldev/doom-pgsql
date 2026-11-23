@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import re
 import unittest
@@ -43,7 +44,7 @@ class KeycapsTest(unittest.TestCase):
             with self.subTest(size=(width, height)), patch(
                 "shutil.get_terminal_size", return_value=os.terminal_size((width, height))
             ), redirect_stdout(io.StringIO()):
-                display.paint(WORLD, STATUS, automap=automap, pose=(0, 0, 0))
+                display.paint(WORLD, STATUS, automap=automap, pose=(0, 0, math.pi / 4))
                 plain = []
                 for row in display._previous:
                     right = 0
@@ -54,7 +55,7 @@ class KeycapsTest(unittest.TestCase):
                         self.assertLessEqual(right, width)
                         plain.append(text)
                 self.assertTrue(any("AUTOMAP" in s for s in plain))
-                self.assertTrue(any(s.strip() == "→" for s in plain))
+                self.assertTrue(any("↗" in s for s in plain))
                 self.assertTrue(any("HP 100%" in s and "AMMO 50" in s for s in plain))
 
     def test_physical_keys_and_combinations(self):

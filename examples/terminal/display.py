@@ -307,8 +307,10 @@ class Display:
 
     def _full_status_bar(self, world, cols, rows):
         # Half-block cells provide one pixel across and two pixels down.
-        return (self.art is not None and self.art.has_status_bar
-                and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200)
+        return (
+            self.art is not None and self.art.has_status_bar
+            and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200
+        )
 
     def paint(
         self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset(),
@@ -322,13 +324,12 @@ class Display:
         footer = len(controls) + 1 + int(page.height >= 28)
         above_fps = int(page.height >= 22)
         below_fps = int(page.height >= 18)
-        header = len(logo) + above_fps + 1 + below_fps
+        map_ready = automap is not None and pose is not None
+        compact = map_ready and page.height <= 25
+        header = (1 + int(page.height >= 16)) if compact else len(logo) + above_fps + 1 + below_fps
         reserve = max(header, footer)
-        if automap is None or pose is None:
-            usable = max(1, page.height - 2 * reserve)
-        else:
-            usable = max(1, page.height - header - footer)
-        has_map = automap is not None and pose is not None and usable >= 4 and page.space >= 24
+        usable = max(1, page.height - (header + footer if map_ready else 2 * reserve))
+        has_map = map_ready and usable >= 4 and page.space >= 24
         side = has_map and (page.space >= 54 or (usable < 10 and page.space >= 35))
         map_width = map_height = 0
         room_w, room_h = page.space, usable
@@ -349,15 +350,21 @@ class Display:
         x = (page.width - cols - (map_width + 2 if side else 0)) // 2
         y = ((page.height - rows) // 2 if not has_map
              else header + (usable - rows - below_map) // 2)
-        _draw_logo(page, logo, y - header, phase)
         readout = f"FPS {fps:.1f}"
         if sql_fps is not None:
             readout += f"   SQL {sql_fps:.1f}"
-        fps_y = y - below_fps - 1
-        if len(readout) <= cols:
-            page.put(x + cols - len(readout), fps_y, VIOLET + readout)
+        if compact:
+            span = cols + (map_width + 2 if side else 0)
+            if span >= len(readout) + 12:
+                page.put(x, y - header, _chrome("DOOM-PGSQL", BRONZE[0], phase % 30 - 4))
+            page.put(max(0, x + span - len(readout)), y - header, VIOLET + _fit_text(readout, page.space))
         else:
-            page.centered(fps_y, readout, VIOLET)
+            _draw_logo(page, logo, y - header, phase)
+            fps_y = y - below_fps - 1
+            if len(readout) <= cols:
+                page.put(x + cols - len(readout), fps_y, VIOLET + readout)
+            else:
+                page.centered(fps_y, readout, VIOLET)
         for i, row in enumerate(self._game_rows(world, status, turn, shot_age, cols, rows)):
             page.put(x, y + i, row)
         below = y + rows
