@@ -6,7 +6,6 @@ DECLARE
     direction int := start_sector;
 BEGIN
     FOR hit IN
-        -- The line bounds index returns each candidate once, even across many grid cells.
         WITH contacts AS (
             SELECT l.id,l.front,l.back,
                 (v[0]*edge[1]-v[1]*edge[0])/den AS k,(v[0]*delta[1]-v[1]*delta[0])/den AS u
@@ -37,8 +36,7 @@ END;
 $$;
 
 CREATE TYPE doom.location AS (pos point,sector int,z float8);
--- All three slide paths fit the same swept bounding box. Consult live portal
--- heights once per touched two-sided line, even when the diagonal is blocked.
+-- The diagonal move and both slide attempts share a bounding box and portal heights.
 CREATE FUNCTION doom.try_move(p bigint,body doom.actors,next_pos point,slide boolean) RETURNS doom.location
 LANGUAGE plpgsql STABLE STRICT AS $$
 DECLARE

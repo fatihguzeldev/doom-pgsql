@@ -10,8 +10,7 @@ CREATE TABLE doom.mesh (
 );
 CREATE INDEX mesh_bounds ON doom.mesh USING gist(bounds);
 
--- Enumerate closed 128-unit grid squares touched by a segment, including both
--- sides of an edge or corner. Work scales with its length along the major axis.
+-- Include both cells along a shared edge and all four at a corner.
 CREATE FUNCTION doom.cells(a point,b point,padding float8 DEFAULT 0)
 RETURNS TABLE(x int,y int) LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     WITH axes AS (SELECT abs(b[0]-a[0])>=abs(b[1]-a[1]) AS horizontal),
@@ -37,7 +36,7 @@ CREATE FUNCTION doom.compile_level(p bigint) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
     root int;
 BEGIN
-    -- Serializes rebuilds of the same level with publication of their revision.
+    -- Hold the level lock until the new mesh and its revision are both visible.
     PERFORM 1 FROM doom.levels WHERE id=p FOR UPDATE;
     DELETE FROM doom.mesh WHERE level=p;
     WITH directed AS (
@@ -63,7 +62,7 @@ BEGIN
     LEFT JOIN doom.art c ON c.level=p AND c.kind=CASE WHEN s.ceiling_tex='F_SKY1' THEN 'wall' ELSE 'flat' END::doom.surface
         AND c.name=CASE WHEN s.ceiling_tex='F_SKY1' THEN doom.sky_name(l.name) ELSE s.ceiling_tex END
     WHERE s.level=p;
-    -- A closed door can subsequently open. Connectivity includes all two-sided portals.
+    -- Include closed doors in connectivity because they can open during play.
     LOOP
         SELECT min(sector) INTO root FROM doom.mesh WHERE level=p AND component IS NULL;
         EXIT WHEN root IS NULL;
@@ -92,7 +91,6 @@ CREATE FUNCTION doom.sector_at(p bigint, pos point) RETURNS int LANGUAGE sql STA
     ORDER BY m.sector LIMIT 1;
 $$;
 
--- Transition tables coalesce a multi-row editor operation into one compile per level.
 CREATE FUNCTION doom.rebuild_edited() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     ids bigint[];

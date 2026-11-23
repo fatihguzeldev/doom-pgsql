@@ -1,5 +1,4 @@
--- Resolve sector membership once at publication of a structural edit. An actor
--- left in empty space is outside the mesh until the editor restores a sector.
+-- Sector -1 marks actors left outside the mesh by a map edit.
 CREATE FUNCTION doom.relocate_after_edit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     WITH positions AS MATERIALIZED (

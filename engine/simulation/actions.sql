@@ -1,4 +1,3 @@
--- Select the nearest neighbour plane in the live game for each activated sector.
 CREATE FUNCTION doom.activate(g doom.games,line_no int,mode text) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
     l doom.lines;

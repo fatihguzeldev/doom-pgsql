@@ -1,5 +1,4 @@
--- CALL in autocommit mode. Each command becomes visible to other connections
--- even while the rest of the batch is still executing.
+-- CALL in autocommit mode so readers can see each tic before the batch finishes.
 CREATE PROCEDURE doom.submit(g bigint,generation bigint,first_tic bigint,commands jsonb,INOUT acknowledged bigint DEFAULT NULL)
 LANGUAGE plpgsql AS $$
 DECLARE
