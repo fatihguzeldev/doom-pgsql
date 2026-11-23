@@ -13,6 +13,15 @@ def connect(dsn, *, autocommit=True):
     return psycopg.AsyncConnection.connect(dsn, autocommit=autocommit, row_factory=dict_row)
 
 
+async def game_query(db, one_way_delay, sql, params, *, binary=False):
+    if one_way_delay:
+        await asyncio.sleep(one_way_delay)
+    result = await db.execute(sql, params, binary=binary)
+    if one_way_delay:
+        await asyncio.sleep(one_way_delay)
+    return result
+
+
 async def saved_games(dsn):
     async with await connect(dsn) as db:
         result = await db.execute(
@@ -65,7 +74,7 @@ class Frames:
         self.token = self.hashes = None
         self.slot = 0
 
-    async def poll(self, db):
+    async def poll(self, db, one_way_delay):
         self.slot += 1
         params = [self.game, self.epoch, self.slot, self.token]
         if self.delta:
@@ -74,7 +83,9 @@ class Frames:
         else:
             source = "doom.poll_frame(%s,%s,%s,%s)"
         # Read the HUD and the world from the same database snapshot.
-        result = await db.execute(
+        result = await game_query(
+            db,
+            one_way_delay,
             f"""SELECT f.*, g.ammo, g.armor, g.keys, g.next_shot, g.secret_exit, a.health
                 FROM {source} f JOIN doom.games g ON g.id=%s
                 JOIN doom.actors a ON a.game=g.id AND a.id=-1""",
@@ -85,8 +96,12 @@ class Frames:
         revision = packet["palette_revision"]
         palette_changed = self.revision != revision
         if palette_changed:
-            result = await db.execute(
-                "SELECT doom.frame_palette(%s,%s) AS rgb", (self.game, revision), binary=True
+            result = await game_query(
+                db,
+                one_way_delay,
+                "SELECT doom.frame_palette(%s,%s) AS rgb",
+                (self.game, revision),
+                binary=True,
             )
             palette = (await result.fetchone())["rgb"]
             if palette is None:
@@ -116,6 +131,7 @@ class Frames:
 class Session:
     def __init__(self, args, state, keys):
         self.dsn, self.state, self.keys = args.dsn, state, keys
+        self.one_way_delay = args.rtt_ms / 2000
         self.frames = Frames(state, args.delta)
         self.active = asyncio.Event()
         self.active.set()
@@ -145,7 +161,9 @@ class Session:
                         while not self.pending.empty():
                             batch.append(self.pending.get_nowait())
                         # Reuse the same first tic and payload after an uncertain commit.
-                        await db.execute(
+                        await game_query(
+                            db,
+                            self.one_way_delay,
                             "CALL doom.submit(%s,%s,%s,%s)",
                             (self.state["game"], self.state["epoch"], tic, Jsonb(batch)),
                         )
@@ -177,7 +195,7 @@ class Session:
                     while True:
                         await self.active.wait()
                         start = monotonic()
-                        packet, changed = await self.frames.poll(db)
+                        packet, changed = await self.frames.poll(db, self.one_way_delay)
                         if packet is None:
                             continue
                         now = monotonic()

@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import math
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -249,8 +251,16 @@ def main():
     parser.add_argument(
         "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
     )
+    parser.add_argument(
+        "--rtt-ms",
+        type=float,
+        default=os.environ.get("DOOM_RTT_MS", "0"),
+        help="add this many milliseconds per gameplay SQL round trip (default: DOOM_RTT_MS or 0)",
+    )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
     args = parser.parse_args()
+    if not math.isfinite(args.rtt_ms) or args.rtt_ms < 0:
+        parser.error("--rtt-ms must be a finite, nonnegative number")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")
 
