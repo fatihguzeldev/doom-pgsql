@@ -32,7 +32,8 @@ CREATE TABLE doom.blockmap (
     PRIMARY KEY(level,x,y)
 );
 
-CREATE FUNCTION doom.compile_level(p bigint) RETURNS void LANGUAGE plpgsql AS $$
+-- A newly imported level has no planner statistics yet. Use the average rows per level.
+CREATE FUNCTION doom.compile_level(p bigint) RETURNS void LANGUAGE plpgsql SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     root int;
 BEGIN

@@ -56,6 +56,11 @@ BEGIN;
 \i /app/engine/wad/prepared.sql
 COMMIT;
 \endif
+SELECT NOT coalesce(proconfig @> ARRAY['plan_cache_mode=force_generic_plan'], false) AS upgrade_mesh
+FROM pg_proc WHERE oid='doom.compile_level(bigint)'::regprocedure \gset
+\if :upgrade_mesh
+ALTER FUNCTION doom.compile_level(bigint) SET plan_cache_mode=force_generic_plan;
+\endif
 \endif
 SQL
 else
