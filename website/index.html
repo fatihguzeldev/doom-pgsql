@@ -5,29 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>doomsql</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="frame-compare.js" defer></script>
   </head>
   <body class="home">
     <main class="book-home">
-      <header class="cover">
-        <h1 class="wordmark">
-          <img src="assets/logo.png" width="672" height="98" alt="doom-pgsql">
-        </h1>
-        <figure class="frame-compare">
-          <div class="frame-plate">
-            <img class="frame-output" src="assets/frame.png" width="160" height="100" alt="a first-person game frame rendered by postgres">
-            <img class="frame-shades" src="assets/shade.png" width="160" height="100" alt="visualization of the shade values for the same game frame" hidden>
-            <span class="frame-seam" aria-hidden="true" hidden></span>
-          </div>
-          <div class="frame-controls" hidden>
-            <label class="visually-hidden" for="frame-split">compare the rendered frame and shade data</label>
-            <span class="frame-control-start" aria-hidden="true">shade data</span>
-            <input id="frame-split" type="range" min="0" max="100" value="56">
-            <span class="frame-control-end" aria-hidden="true">frame</span>
-          </div>
-          <figcaption>postgres drew this frame.</figcaption>
-        </figure>
-      </header>
+      <h1 class="wordmark">
+        <img src="assets/logo.png" width="672" height="98" alt="doom-pgsql">
+      </h1>
       <nav class="chapter-index" aria-labelledby="chapters">
         <h2 id="chapters">chapters</h2>
         <ol class="chapter-list">
