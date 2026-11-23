@@ -101,7 +101,7 @@ DECLARE
     high_i int;
     opacity bytea;
     level_light int;
-    zbuffer float8[]; -- Only allocated for columns with masked surfaces or sprites.
+    zbuffer float8[];
     overlay_columns int[];
     this_x int:=-1;
     has_overlay boolean;
@@ -164,7 +164,7 @@ BEGIN
     ELSIF background_only THEN
         SELECT array_agg(s ORDER BY x) INTO strokes FROM unnest(world)s;
     ELSE
-        -- Opaque portal strokes never overlap. Their traversal order is sufficient.
+        -- Opaque portal strokes never overlap.
         strokes:=world;
     END IF;
     width:=160; height:=100; frame_slot:=slot;
@@ -177,12 +177,11 @@ BEGIN
     ELSIF background_only THEN
         scene_depth:=array_fill('Infinity'::float8,ARRAY[16000]);
     END IF;
-    -- Each plane has a single depth and light per scanline, across its entire width.
+    -- Depth and light are constant across each scanline of a plane.
     SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
     INTO plane_keys,planes
     FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
     LEFT JOIN doom.plane_tables t ON t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
-    -- Read and detoast only the textures actually present in this view.
     IF full_wall THEN
         SELECT a.w,a.h,substring(a.pixels FROM 1),a.column_ids INTO tex.w,tex.h,tex.pixels,tex.column_ids
         FROM doom.art a WHERE a.id=solid_art;
@@ -282,7 +281,7 @@ BEGIN
                     low_i:=doom.post_row(lower(span),stroke.v,stroke.dv,n);
                     high_i:=doom.post_row(upper(span),stroke.v,stroke.dv,n);
                     CONTINUE WHEN low_i>=high_i OR NOT (stroke.depth < ANY(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]));
-                    -- Keep the original sampling phase, even at an exact texel boundary.
+                    -- Starting at the post instead of the stroke can round to a different texel.
                     IF sample IS NULL THEN sample:=doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n); END IF;
                     IF stroke.depth < ALL(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]) THEN
                         column_data:=overlay(column_data PLACING substring(sample FROM low_i+1 FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);

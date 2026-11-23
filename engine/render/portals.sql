@@ -4,8 +4,7 @@ CREATE TYPE doom.projection AS (
 );
 CREATE TYPE doom.aperture AS (sector int, lo int, hi int, entry int, inv0 float8, inv_step float8);
 
--- Sweep angular events. Between projected endpoints the nearest edge changes
--- only where two affine inverse-depth functions cross.
+-- Between projected endpoints, the nearest edge changes only where two inverse-depth lines cross.
 CREATE FUNCTION doom.visible(mesh doom.edge[],win doom.aperture,eye point,fx float8,fy float8)
 RETURNS SETOF doom.projection LANGUAGE plpgsql IMMUTABLE STRICT ROWS 4 AS $$
 DECLARE
@@ -113,8 +112,7 @@ INSERT INTO doom.screen SELECT ARRAY(SELECT atan((x-79.5)/80) FROM generate_seri
 CREATE TYPE doom.stroke AS (
     x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int
 );
--- One stationary viewpoint per game. Moving actors do not invalidate the opaque
--- world. Geometry revisions and live openings are checked in the frame snapshot.
+-- Sprites are drawn separately. A moving door can change the background even when the camera is still.
 CREATE TABLE doom.view_cache (
     game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, revision bigint NOT NULL,
     x float8 NOT NULL,y float8 NOT NULL,z float8 NOT NULL,yaw float8 NOT NULL,sector int NOT NULL,
@@ -132,8 +130,7 @@ $$;
 CREATE TYPE doom.wall_run AS (projection doom.projection,anchor float8,light int);
 CREATE TYPE doom.world_view AS (strokes doom.stroke[],runs doom.wall_run[]);
 
--- Expand only at the consumer. The inverse-depth expression and sampling phase
--- use the same evaluation order as clipped columns in the portal walk.
+-- Match the order of floating-point operations in project_world for clipped columns.
 CREATE FUNCTION doom.wall_rays(runs doom.wall_run[]) RETURNS SETOF doom.stroke
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     SELECT x,0,100,1,e.mid_id,
@@ -197,8 +194,7 @@ BEGIN
         front:=rooms[1+win.sector];
         FOR wall IN SELECT * FROM doom.visible(edges,win,body.pos,fx,fy) LOOP
             e:=wall.wall; back:=rooms[1+e.dest]; open_from:=NULL;
-            -- Root windows are untouched. A portal that emitted nothing and
-            -- retained the whole screen has the same clip bounds as the root.
+            -- A full-screen portal with no earlier strokes still has the root clip bounds.
             IF e.dest IS NULL AND e.mid_id IS NOT NULL AND (win.entry=-1 OR
                 (win.lo=0 AND win.hi=159 AND fragments IS NULL AND view_data.runs IS NULL)) THEN
                 far_scale:=80*least(wall.inv0+wall.lo*wall.inv_step,wall.inv0+wall.hi*wall.inv_step);

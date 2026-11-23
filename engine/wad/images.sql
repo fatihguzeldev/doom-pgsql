@@ -1,6 +1,6 @@
 CREATE TYPE doom.image AS (w int,h int,origin_x int,origin_y int,pixels bytea,mask bytea);
 
--- Resolve posts into a column-major image. An omitted mask means fully opaque.
+-- Pixels are column-major. A NULL mask means every pixel is opaque.
 CREATE FUNCTION doom.compose(w int,h int,patches bytea[],xs int[],ys int[])
 RETURNS doom.image LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE

@@ -9,8 +9,7 @@ $$;
 CREATE TRIGGER changed_palette BEFORE UPDATE OF palette,lighting ON doom.levels
 FOR EACH ROW EXECUTE FUNCTION doom.palette_revision();
 
--- The player is already read for every camera snapshot. Fold the other visible
--- actors into one commutative signature, including direct edits and reversals.
+-- XOR lets an edit remove the old actor hash and add the new one in any order.
 CREATE TABLE doom.actor_scenes (
     game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, signature bit(128) NOT NULL
 );
@@ -84,8 +83,7 @@ BEGIN
 END;
 $$;
 
--- Twenty independently replaceable strips, each containing eight full columns.
--- A missing hash vector requests a keyframe. The SQL frame layout stays unchanged.
+-- Each hash covers eight columns. Pass NULL for known to request all 20 strips.
 CREATE FUNCTION doom.poll_tiles(gid bigint,generation bigint,slot bigint,previous text,known text[])
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea,
     token text,palette_revision bigint,camera_x float8,camera_y float8,camera_z float8,yaw float8,finished boolean,
@@ -116,7 +114,7 @@ BEGIN
 END;
 $$;
 
--- Read the palette corresponding to the exact frame. A concurrent edit asks the reader to poll again.
+-- If the frame revision is stale, the palette lookup returns NULL. Poll again.
 CREATE FUNCTION doom.frame_palette(gid bigint,wanted_revision bigint) RETURNS bytea
 LANGUAGE sql STABLE STRICT AS $$
     SELECT doom.frame_palette(gid) FROM doom.games g JOIN doom.levels l ON l.id=g.level

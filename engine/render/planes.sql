@@ -14,8 +14,6 @@ RETURN int8send(
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+6]))::bigint << 8)
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+7]))::bigint << 0));
 
--- Draw one vertical plane interval without transposing a screen or copying
--- its entire destination column for every eight pixels.
 CREATE FUNCTION doom.plane_strip(data bytea,px float8,py float8,dx float8,dy float8,depths float8[],y0 int,y1 int)
 RETURNS bytea LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
 DECLARE
@@ -35,8 +33,7 @@ BEGIN
 END;
 $$;
 
--- An eight-pixel scanline packet shares one depth. Rays retain the operation
--- order of the column renderer at integer texture boundaries.
+-- Match the column renderer's rounding at texel boundaries.
 CREATE FUNCTION doom.flat_eight(data bytea,px float8,py float8,rx float8[],ry float8[],z float8,i int)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 RETURN int8send(

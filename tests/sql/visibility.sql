@@ -1,5 +1,4 @@
--- A per-column oracle intersects geometric rays directly. It shares neither the
--- projection nor interval sweep with the renderer.
+-- Check the portal sweep against the nearest ray hit in each column.
 DO $$
 DECLARE
     edges doom.edge[];

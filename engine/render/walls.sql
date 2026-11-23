@@ -1,5 +1,3 @@
--- Pack a block in one expression so PostgreSQL's executor can evaluate the
--- eight independent texture lookups without eight PL/pgSQL iterations.
 CREATE FUNCTION doom.gather8(data bytea,base int,mask int,v float8,step float8,i int)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 RETURN int8send(
@@ -13,7 +11,7 @@ RETURN int8send(
     | (get_byte(data,base+(floor(v+(i+7)*step)::int & mask))::bigint << 0));
 
 -- With an integral texture anchor, row y addresses floor(anchor+(y-49.5)*step).
--- A texel can change only at 2*k / abs(2*y-99). Store those boundaries once.
+-- A texel can change only at 2*k / abs(2*y-99).
 CREATE TABLE doom.wall_scales (cuts float8[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton));
 INSERT INTO doom.wall_scales
 SELECT array_agg(DISTINCT cut ORDER BY cut),true FROM (
@@ -61,8 +59,7 @@ RETURN
     ||substring(atlas FROM 1+col+((anchor+offsets[i+23]) & mask) FOR 4)
     ||substring(atlas FROM 1+col+((anchor+offsets[i+24]) & mask) FOR 4);
 
--- Column samples are contiguous in WAD patch storage. An affine phase confined
--- to one texel certifies a native slice even at nonintegral scale.
+-- If floor(v+i*dv) advances one row per sample, copy the column up to the next wrap.
 CREATE FUNCTION doom.column_samples(colors bytea,w int,h int,u float8,v float8,dv float8,n int)
 RETURNS bytea LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
 DECLARE

@@ -67,7 +67,7 @@ CREATE TABLE doom.art (
     UNIQUE(level,kind,name)
 );
 
--- Read only the visible columns of the compiled wall texture.
+-- Uncompressed TOAST storage lets substring fetch just the visible columns.
 ALTER TABLE doom.art ALTER COLUMN quads SET STORAGE EXTERNAL;
 
 CREATE TABLE doom.sectors (
