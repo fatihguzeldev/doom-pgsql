@@ -12,6 +12,8 @@ press `enter` on `new game` to start. use the arrow keys to choose a map or diff
 
 move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fire and `e` to open doors or hit switches. `r` toggles auto-walk, `esc` pauses and `q` quits.
 
+the map follows you. north stays up and the arrow shows which way you're facing.
+
 ## flags
 
 | flag | use |
@@ -23,8 +25,9 @@ move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fir
 | `--dsn <connection>` | play on an existing postgres database with the engine installed |
 | `--rtt-ms 0` | set the local round-trip delay in milliseconds (0 turns it off) |
 | `--delta` | fetch only the strips of the frame that changed |
-| `--rife` | draw at 64×40, keep the pixels sharp at 320×200 and show up to four rife frames between sql frames |
-| `--predict-turn` | show turns before the next frame arrives |
+| `--rife` | draw at 64×40, fill the gaps between sql frames and preview turns locally |
+| `--rife --detail` | draw at 160×100 for clearer textures at a lower frame rate |
+| `--predict-turn` | preview turns in the plain sql mode |
 | `--mute` | turn off sound |
 
 set local cpu, ram, swap and simulated latency in [settings.yaml](settings.yaml). `--dsn` skips the file.

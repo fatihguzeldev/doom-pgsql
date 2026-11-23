@@ -290,7 +290,8 @@ def main():
     parser.add_argument(
         "--skill", type=int, choices=range(1, 6), default=3, help="initial difficulty (default: 3)"
     )
-    parser.add_argument("--rife", action="store_true", help="upscale 64x40 SQL frames and interpolate at 5x")
+    parser.add_argument("--rife", action="store_true", help="interpolate at up to 5x with local turn preview")
+    parser.add_argument("--detail", action="store_true", help="use the native 160x100 SQL renderer with --rife")
     parser.add_argument("--delta", action="store_true", help="receive changed eight-column strips")
     parser.add_argument(
         "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
@@ -302,8 +303,10 @@ def main():
     )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
     args = parser.parse_args()
-    if args.rife and (args.delta or args.predict_turn):
-        parser.error("--rife uses full 64x40 frames and buffered turns; omit --delta and --predict-turn")
+    if args.detail and not args.rife:
+        parser.error("--detail requires --rife")
+    if args.rife and args.delta:
+        parser.error("--rife uses full frames; omit --delta")
     try:
         args.rtt_ms = local_rtt_ms(args.dsn, args.rtt_ms)
     except ValueError as error:

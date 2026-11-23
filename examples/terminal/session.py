@@ -58,7 +58,7 @@ async def prepare_level(db, wad, map_name):
 
 async def open_game(args, wad, level=None, previous_game=None):
     async with await connect(args.dsn, autocommit=False) as db:
-        if getattr(args, "rife", False):
+        if getattr(args, "rife", False) and not getattr(args, "detail", False):
             result = await db.execute(
                 "SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NOT NULL AS ready"
             )
@@ -164,7 +164,8 @@ class Session:
     def __init__(self, args, state, keys, engine=None):
         self.dsn, self.state, self.keys = args.dsn, state, keys
         self.one_way_delay = args.rtt_ms / 2000
-        self.frames = Frames(state, args.delta, low_resolution=engine is not None)
+        low_resolution = engine is not None and not getattr(args, "detail", False)
+        self.frames = Frames(state, args.delta, low_resolution=low_resolution)
         self.presenter = Presenter(engine) if engine is not None else None
         self.world = None
         self.pose = None
