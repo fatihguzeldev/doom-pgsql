@@ -21,6 +21,7 @@ from examples.terminal.sound import pistol_sound
 
 BUNDLED_WAD = Path(__file__).resolve().parents[2] / "assets" / "doom1.wad"
 SKILLS = ("I'm too young to die", "Hey, not too rough", "Hurt me plenty", "Ultra-Violence", "Nightmare!")
+LOGO_HZ = 10
 
 
 async def first(*coroutines):
@@ -35,7 +36,7 @@ async def first(*coroutines):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def menu(keys, display, title, items, *, picture=None, adjust=None, animate=False):
+async def menu(keys, display, title, items, *, picture=None, adjust=None):
     """Return the selected row, or None on Escape."""
     keys.set_menu(True)
     selected = 0
@@ -43,7 +44,7 @@ async def menu(keys, display, title, items, *, picture=None, adjust=None, animat
     while not keys.quit.is_set():
         rows = items() if callable(items) else items
         now = monotonic()
-        phase = int(now * 10) if animate else None
+        phase = int(now * LOGO_HZ)
         lit = keys.lit_keys(now)
         layout = (shutil.get_terminal_size(), tuple(rows), selected, phase, lit)
         if layout != last:
@@ -52,7 +53,7 @@ async def menu(keys, display, title, items, *, picture=None, adjust=None, animat
             )
             last = layout
         try:
-            key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35 if lit else 0.1)
+            key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35 if lit else 1 / LOGO_HZ)
         except TimeoutError:
             continue
         if key in ("q", "esc", "end"):
@@ -93,7 +94,6 @@ async def new_game_menu(args, maps, display, keys):
             items,
             picture=display.art.title,
             adjust=adjust,
-            animate=True,
         )
         if row != 3:
             return row == 0
@@ -148,6 +148,7 @@ async def play_session(session, display, keys, maps):
                 turn,
                 session.fps(now),
                 shot_age=age,
+                phase=int(now * LOGO_HZ),
                 lit_keys=keys.lit_keys(now),
             )
         try:

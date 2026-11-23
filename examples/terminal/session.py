@@ -199,7 +199,6 @@ class Session:
                                 "secret_exit",
                             )
                         }
-                        self.status.update(game=self.state["game"], map=self.state["map"])
                         if packet["next_shot"] > self._next_shot:
                             self.last_shot = now
                             on_shot()

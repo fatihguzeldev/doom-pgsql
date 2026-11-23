@@ -146,35 +146,36 @@ def _logo(page):
 
 def _chrome(text, color, glint):
     ink = "\x1b[38;2;" + _ansi_rgb(bytes.fromhex(color[1:]))
-    if glint is None or glint < -2 or glint >= len(text):
+    if glint < -2 or glint >= len(text):
         return ink + text
     left, right = max(0, glint), min(len(text), glint + 3)
     return ink + text[:left] + GLINT + text[left:right] + ink + text[right:]
 
 
-def _draw_logo(page, logo, y, phase=None):
+def _draw_logo(page, logo, y, phase):
     if not logo:
         return
     width = sum(map(len, logo[0]))
     if width > page.space:
         page.centered(y, "DOOM-PGSQL", GOLD)
         return
-    x = (page.width - width) // 2
+    travel = min(2, (page.space - width) // 2)
+    x = (page.width - width) // 2 + round(travel * math.sin(phase * math.tau / 40))
     for i, (left, dash, right) in enumerate(logo):
         shade = round(i * 4 / max(1, len(logo) - 1))
-        glint = None if phase is None else (phase * 2) % (width + 36) - i - 4
+        glint = (phase * 2) % (width + 36) - i - 4
         lettering = _chrome(left, BRONZE[shade], glint) + EDGE + dash
-        lettering += _chrome(right, STEEL[shade], None if glint is None else glint - len(left + dash))
+        lettering += _chrome(right, STEEL[shade], glint - len(left + dash))
         page.put(x, y + i, lettering)
     if logo is not LOGO:
         return
     # Half-block samples form a pair of mirrored copper sine waves.
-    wing = min(22, (page.space - width) // 2 - 2)
+    wing = min(22, (page.space - width) // 2 - 2 - travel)
     if wing < 6:
         return
     wave = [[" "] * wing for _ in logo]
     for column in range(wing):
-        angle = column * 0.31 + (phase or 0) * math.tau / 32
+        angle = column * 0.31 + phase * math.tau / 32
         sample = round((1 + math.sin(angle)) * (2 * len(logo) - 1) / 2)
         wave[sample // 2][column] = "▄" if sample % 2 else "▀"
     for row, pixels in enumerate(wave):
@@ -304,14 +305,19 @@ class Display:
             self._render_key = key
         return self._rendered
 
-    def paint(self, frame, palette, status, turn=0.0, fps=0.0, shot_age=None, *, lit_keys=frozenset()):
+    def paint(
+        self, frame, palette, status, turn=0.0, fps=0.0, shot_age=None, *, phase=0, lit_keys=frozenset()
+    ):
         page = _Page()
         logo = _logo(page)
         controls = _control_rows(page.space, status.get("auto_walk", False), lit_keys)
         if len(controls) + 4 > page.height:
             controls = [(8, _keycap("esc", 3, lit_keys) + TEXT + " menu")] if page.space >= 8 else []
         footer = len(controls) + 1 + int(page.height >= 28)
-        reserve = max(len(logo) + 1, footer)
+        above_fps = int(page.height >= 22)
+        below_fps = int(page.height >= 18)
+        header = len(logo) + above_fps + 1 + below_fps
+        reserve = max(header, footer)
         cols, rows = _fit_image(
             frame["width"], frame["height"], page.space, max(1, page.height - 2 * reserve)
         )
@@ -320,19 +326,13 @@ class Display:
             return
         x = (page.width - cols) // 2
         y = (page.height - rows) // 2
-        _draw_logo(page, logo, y - len(logo) - 1)
-        readout = f"SQL FPS {fps:.1f}"
-        game = status.get("game")
-        identity = str(status.get("map") or "")
-        if game is not None:
-            identity = f"{identity}  /  GAME {game}" if identity else f"GAME {game}"
-        left = _fit_text(identity, max(0, cols - len(readout) - 2))
-        if left:
-            page.put(x, y - 1, GOLD + left)
+        _draw_logo(page, logo, y - header, phase)
+        readout = f"FPS {fps:.1f}"
+        fps_y = y - below_fps - 1
         if len(readout) <= cols:
-            page.put(x + cols - len(readout), y - 1, VIOLET + readout)
+            page.put(x + cols - len(readout), fps_y, VIOLET + readout)
         else:
-            page.centered(y - 1, readout, VIOLET)
+            page.centered(fps_y, readout, VIOLET)
         for i, row in enumerate(self._game_rows(frame, palette, status, turn, shot_age, cols, rows)):
             page.put(x, y + i, row)
         below = y + rows
@@ -350,7 +350,7 @@ class Display:
             page.put((page.width - used) // 2, below + i, line)
         self._present(page)
 
-    def menu(self, title, items, selected=0, *, art=None, phase=None, adjustable=False, lit_keys=frozenset()):
+    def menu(self, title, items, selected=0, *, art=None, phase=0, adjustable=False, lit_keys=frozenset()):
         page = _Page()
         logo = _logo(page)
         gap = int(page.height >= 14)

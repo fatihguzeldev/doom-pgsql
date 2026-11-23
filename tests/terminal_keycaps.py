@@ -73,7 +73,7 @@ class KeycapsTest(unittest.TestCase):
             with redirect_stdout(io.StringIO()) as initial:
                 display.paint(FRAME, PALETTE, STATUS)
             self.assertIn("HP 100%", initial.getvalue())
-            self.assertIn("SQL FPS", initial.getvalue())
+            self.assertIn("FPS 0.0", initial.getvalue())
             with redirect_stdout(io.StringIO()) as down:
                 display.paint(FRAME, PALETTE, STATUS, lit_keys={"w", " "})
             self.assertIn(KEY_CYAN, down.getvalue())
@@ -102,6 +102,27 @@ class KeycapsTest(unittest.TestCase):
             self.assertGreaterEqual(len(world), height // 2)
             self.assertLessEqual(abs(left - (width - left - cols)), 1)
             self.assertLessEqual(abs(top - (height - top - len(world))), 1)
+            header = display._previous[:top]
+            self.assertFalse(header[-1])
+            self.assertEqual([SGR.sub("", line) for _, line in header[-2]], ["FPS 0.0"])
+            if height >= 22:
+                self.assertFalse(header[-3])
+
+    def test_logo_moves_while_the_world_and_counter_stay_still(self):
+        display = Display()
+        for size in ((80, 24), (116, 42)):
+            with patch("shutil.get_terminal_size", return_value=os.terminal_size(size)):
+                with redirect_stdout(io.StringIO()):
+                    display.paint(FRAME, PALETTE, STATUS, phase=0)
+                first_page = display._previous
+                with redirect_stdout(io.StringIO()) as update:
+                    display.paint(FRAME, PALETTE, STATUS, phase=10)
+                moved = [(a, b) for a, b in zip(first_page, display._previous) if a != b]
+                self.assertTrue(moved)
+                for before, after in moved:
+                    self.assertEqual(after[0][0] - before[0][0], 2)
+                self.assertNotIn("FPS", update.getvalue())
+                self.assertNotIn("48;2;3;5;7m", update.getvalue())
 
 
 if __name__ == "__main__":
