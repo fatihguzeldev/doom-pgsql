@@ -10,7 +10,7 @@ CREATE TABLE doom.mesh (
 );
 CREATE INDEX mesh_bounds ON doom.mesh USING gist(bounds);
 
--- Include both cells along a shared edge and all four at a corner.
+-- include both cells along a shared edge and all four at a corner.
 CREATE FUNCTION doom.cells(a point,b point,padding float8 DEFAULT 0)
 RETURNS TABLE(x int,y int) LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     WITH axes AS (SELECT abs(b[0]-a[0])>=abs(b[1]-a[1]) AS horizontal),
@@ -32,12 +32,12 @@ CREATE TABLE doom.blockmap (
     PRIMARY KEY(level,x,y)
 );
 
--- A newly imported level has no planner statistics yet. Use the average rows per level.
+-- freshly imported levels have no planner statistics. a generic plan uses the average level size.
 CREATE FUNCTION doom.compile_level(p bigint) RETURNS void LANGUAGE plpgsql SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     root int;
 BEGIN
-    -- Hold the level lock until the new mesh and its revision are both visible.
+    -- serialize mesh rebuilds with edits to this level.
     PERFORM 1 FROM doom.levels WHERE id=p FOR UPDATE;
     DELETE FROM doom.mesh WHERE level=p;
     WITH directed AS (
@@ -63,7 +63,7 @@ BEGIN
     LEFT JOIN doom.art c ON c.level=p AND c.kind=CASE WHEN s.ceiling_tex='F_SKY1' THEN 'wall' ELSE 'flat' END::doom.surface
         AND c.name=CASE WHEN s.ceiling_tex='F_SKY1' THEN doom.sky_name(l.name) ELSE s.ceiling_tex END
     WHERE s.level=p;
-    -- Include closed doors in connectivity because they can open during play.
+    -- include closed doors in connectivity because they can open during play.
     LOOP
         SELECT min(sector) INTO root FROM doom.mesh WHERE level=p AND component IS NULL;
         EXIT WHEN root IS NULL;

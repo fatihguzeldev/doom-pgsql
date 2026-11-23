@@ -38,7 +38,7 @@ LANGUAGE sql STABLE AS $$
     SELECT * FROM doom.poll_frame(gid,generation,slot,previous,64);
 $$;
 
--- Each hash covers eight columns. Pass NULL for known to request all 20 strips.
+-- each hash covers eight columns. pass null for known to request all 20 strips.
 CREATE OR REPLACE FUNCTION doom.poll_tiles(gid bigint,generation bigint,slot bigint,previous text,known text[])
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea,
     token text,palette_revision bigint,camera_x float8,camera_y float8,camera_z float8,yaw float8,finished boolean,
@@ -69,7 +69,7 @@ BEGIN
 END;
 $$;
 
--- If the frame revision is stale, the palette lookup returns NULL. Poll again.
+-- poll again if a palette edit invalidates this revision.
 CREATE OR REPLACE FUNCTION doom.frame_palette(gid bigint,wanted_revision bigint) RETURNS bytea
 LANGUAGE sql STABLE STRICT AS $$
     SELECT doom.frame_palette(gid) FROM doom.games g JOIN doom.levels l ON l.id=g.level

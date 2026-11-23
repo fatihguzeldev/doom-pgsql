@@ -1,4 +1,4 @@
--- All offsets used by the WAD reader are zero-based.
+-- wad offsets start at zero.
 CREATE FUNCTION doom.u16(b bytea, i int) RETURNS int
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 RETURN get_byte(b,i) + 256 * get_byte(b,i+1);

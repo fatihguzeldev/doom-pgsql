@@ -9,7 +9,7 @@ $$;
 CREATE TRIGGER changed_palette BEFORE UPDATE OF palette,lighting ON doom.levels
 FOR EACH ROW EXECUTE FUNCTION doom.palette_revision();
 
--- XOR lets an edit remove the old actor hash and add the new one in any order.
+-- xor lets an edit remove the old actor hash and add the new one in any order.
 CREATE TABLE doom.actor_scenes (
     game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, signature bit(128) NOT NULL
 );

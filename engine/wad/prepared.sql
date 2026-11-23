@@ -1,7 +1,7 @@
 ALTER TABLE doom.levels ADD COLUMN wad_hash bytea;
 CREATE UNIQUE INDEX prepared_wad_map ON doom.levels(wad_hash,name) WHERE wad_hash IS NOT NULL;
 
--- Geometry, material and palette edits update the level row. Spawns are edited independently.
+-- geometry, material and palette edits update the level row. spawns are edited independently.
 CREATE FUNCTION doom.forget_wad_source() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     NEW.wad_hash := NULL;
@@ -32,7 +32,7 @@ CREATE TRIGGER changed_sprite_map AFTER INSERT OR UPDATE OF code,sprite OR DELET
 FOR EACH STATEMENT EXECUTE FUNCTION doom.forget_spawn_source();
 
 CREATE FUNCTION doom.cached_level(wad_hash bytea,map_name text) RETURNS bigint LANGUAGE sql STRICT AS $$
-    -- Keep the sprite mapping stable through lookup, import and game creation.
+    -- keep the sprite mapping stable through lookup, import and game creation.
     SELECT pg_advisory_xact_lock_shared(hashtext('doom.thing_types'),0);
     SELECT id FROM doom.levels WHERE levels.wad_hash=$1 AND name=upper($2 COLLATE "C") AND ready FOR SHARE;
 $$;

@@ -4,7 +4,7 @@ LANGUAGE plpgsql STABLE STRICT SET jit=off SET plan_cache_mode=force_generic_pla
 DECLARE
     p bigint;
     body doom.actors;
-    -- The compiled wall strips, plane tables and stationary cache use the 160x100 pixel grid.
+    -- compiled wall strips, plane tables and cached backgrounds use the 160x100 grid.
     native boolean:=cam.w=160;
     fx float8;
     fy float8;
@@ -121,7 +121,7 @@ BEGIN
         runs:=NULL;
     END IF;
     full_wall:=full_wall AND sprites IS NULL AND NOT background_only;
-    -- Small exposed plane fragments cost less to sample than a screen transpose.
+    -- small exposed plane fragments cost less to sample than a screen transpose.
     dense_flats:=native AND plane_area>=10000;
     IF dense_flats THEN
         colors[0:cam.w-1]:=doom.flat_background(world,camera_x,camera_y,fx,fy,eye,row_scale);
@@ -132,7 +132,7 @@ BEGIN
     ELSIF background_only THEN
         SELECT array_agg(s ORDER BY x) INTO strokes FROM unnest(world)s;
     ELSE
-        -- Opaque portal strokes never overlap.
+        -- opaque portal strokes never overlap.
         strokes:=world;
     END IF;
     width:=cam.w; height:=cam.h; frame_slot:=slot;
@@ -176,7 +176,6 @@ BEGIN
         INTO pixels,shades;
         RETURN NEXT; RETURN;
     END IF;
-    -- Depth and light are constant across each scanline of a plane.
     SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
     INTO plane_keys,planes
     FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
@@ -248,7 +247,7 @@ BEGIN
                     low_i:=doom.post_row(lower(span),stroke.v,stroke.dv,n);
                     high_i:=doom.post_row(upper(span),stroke.v,stroke.dv,n);
                     CONTINUE WHEN low_i>=high_i OR NOT (stroke.depth < ANY(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]));
-                    -- Starting at the post instead of the stroke can round to a different texel.
+                    -- starting at the post instead of the stroke can round to a different texel.
                     IF sample IS NULL THEN sample:=doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n); END IF;
                     IF stroke.depth < ALL(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]) THEN
                         column_data:=overlay(column_data PLACING substring(sample FROM low_i+1 FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);

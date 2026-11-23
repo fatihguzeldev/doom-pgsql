@@ -37,7 +37,7 @@ BEGIN
     IF player.health<=0 THEN RETURN n; END IF;
     player.yaw := player.yaw+turn;
     player.yaw := player.yaw-floor(player.yaw/(2*pi()))*(2*pi());
-    -- An exit switch can end the tic before movement saves the new yaw.
+    -- an exit switch can end the tic before movement saves the new yaw.
     write_turn:=turn<>0 AND (forward<>0 OR strafe<>0) AND NOT use_line AND NOT fire;
     IF turn<>0 AND NOT write_turn THEN UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1; END IF;
     facing := point(cos(player.yaw),sin(player.yaw));

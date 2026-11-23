@@ -1,4 +1,4 @@
--- Between projected endpoints, the nearest edge changes only where two inverse-depth lines cross.
+-- between projected endpoints, the nearest edge changes only where two inverse-depth lines cross.
 CREATE OR REPLACE FUNCTION doom.visible(mesh doom.edge[],win doom.aperture,eye point,fx float8,fy float8,screen_width int)
 RETURNS SETOF doom.projection LANGUAGE plpgsql IMMUTABLE STRICT ROWS 4 AS $$
 DECLARE
@@ -81,7 +81,7 @@ BEGIN
 END;
 $$;
 
--- Match the order of floating-point operations in project_world for clipped columns.
+-- match the order of floating-point operations in project_world for clipped columns.
 CREATE OR REPLACE FUNCTION doom.wall_rays(runs doom.wall_run[],screen_width int,screen_height int) RETURNS SETOF doom.stroke
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     SELECT x,0,screen_height,1,e.mid_id,
@@ -96,7 +96,6 @@ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
     CROSS JOIN LATERAL (SELECT 1/d.inv AS depth)z;
 $$;
 
--- kind 0 plane (v is world height), 1 solid column, 2 sky, 3 masked column.
 CREATE OR REPLACE FUNCTION doom.project_world(p bigint,g bigint,body doom.actors,fx float8,fy float8,cam doom.viewports)
 RETURNS doom.world_view LANGUAGE plpgsql STABLE STRICT AS $$
 DECLARE
@@ -146,7 +145,7 @@ BEGIN
         front:=rooms[1+win.sector];
         FOR wall IN SELECT * FROM doom.visible(edges,win,body.pos,fx,fy,cam.w) LOOP
             e:=wall.wall; back:=rooms[1+e.dest]; open_from:=NULL;
-            -- A full-screen portal with no earlier strokes still has the root clip bounds.
+            -- a full-screen portal with no earlier strokes still has the root clip bounds.
             IF e.dest IS NULL AND e.mid_id IS NOT NULL AND (win.entry=-1 OR
                 (win.lo=0 AND win.hi=cam.w-1 AND fragments IS NULL AND view_data.runs IS NULL)) THEN
                 far_scale:=cam.focal*least(wall.inv0+wall.lo*wall.inv_step,wall.inv0+wall.hi*wall.inv_step);
@@ -164,7 +163,7 @@ BEGIN
             upper_anchor:=e.v+CASE WHEN (e.flags&8)=0 THEN back.z_ceil+coalesce(e.upper_h,0) ELSE front.z_ceil END-eye;
             lower_anchor:=e.v+CASE WHEN (e.flags&16)<>0 THEN front.z_ceil ELSE back.z_floor END-eye;
             middle_anchor:=e.v+CASE WHEN (e.flags&16)=0 THEN high_z ELSE low_z+e.mid_h END-eye;
-            -- Sibling apertures partition x. Only open columns enter a child,
+            -- sibling apertures partition x. only open columns enter a child,
             -- so no pending window can revisit a column closed by this wall.
             FOR x IN wall.lo..wall.hi LOOP
                 y0:=top_clip[x]; y1:=bottom_clip[x];

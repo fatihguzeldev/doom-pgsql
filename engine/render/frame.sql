@@ -23,4 +23,4 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 COMMENT ON FUNCTION doom.frame(bigint,bigint,bigint) IS
-'Column-major 8-bit pixels and shades. At (x,y), i=x*height+y. RGB starts at 3*(256*shades[i]+pixels[i]) in frame_palette(game).';
+'column-major 8-bit pixels and shades. at (x,y), i=x*height+y. rgb starts at 3*(256*shades[i]+pixels[i]) in frame_palette(game).';

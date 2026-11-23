@@ -36,7 +36,7 @@ END;
 $$;
 
 CREATE TYPE doom.location AS (pos point,sector int,z float8);
--- The diagonal move and both slide attempts share a bounding box and portal heights.
+-- the diagonal move and both slide attempts share a bounding box and portal heights.
 CREATE FUNCTION doom.try_move(p bigint,body doom.actors,next_pos point,slide boolean) RETURNS doom.location
 LANGUAGE plpgsql STABLE STRICT AS $$
 DECLARE

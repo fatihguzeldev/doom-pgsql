@@ -1,4 +1,4 @@
--- CALL in autocommit mode so readers can see each tic before the batch finishes.
+-- call in autocommit mode to publish each tic as it completes.
 CREATE PROCEDURE doom.submit(g bigint,generation bigint,first_tic bigint,commands jsonb,INOUT acknowledged bigint DEFAULT NULL)
 LANGUAGE plpgsql AS $$
 DECLARE

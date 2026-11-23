@@ -1,4 +1,4 @@
--- Sector -1 marks actors left outside the mesh by a map edit.
+-- sector -1 marks actors left outside the mesh by a map edit.
 CREATE FUNCTION doom.relocate_after_edit() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     WITH positions AS MATERIALIZED (

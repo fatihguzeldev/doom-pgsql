@@ -1,6 +1,6 @@
 CREATE TYPE doom.surface AS ENUM ('wall','flat','sprite');
--- Every four samples at a step below 2/3 draw at most three consecutive
--- texels. This 16-byte word contains every possible four-sample substring.
+-- every four samples at a step below 2/3 draw at most three consecutive
+-- texels. this 16-byte word contains every possible four-sample substring.
 CREATE FUNCTION doom.wall_quads(data bytea,w int,h int) RETURNS bytea LANGUAGE sql IMMUTABLE STRICT AS $$
     WITH cols AS MATERIALIZED (
         SELECT x,substring(data FROM 1+x*h FOR h) AS col FROM generate_series(0,w-1)x
@@ -11,7 +11,7 @@ CREATE FUNCTION doom.wall_quads(data bytea,w int,h int) RETURNS bytea LANGUAGE s
         '(..)(..)(..)','\1\1\1\1\2\2\2\1\2\2\3\1\1\2\3\3','g'),'hex')
     FROM padded,generate_series(1,h)y;
 $$;
--- Ordinals are zero-based in the texture, one-based in the SQL arrays.
+-- texture column ids start at zero. array subscripts start at one.
 CREATE FUNCTION doom.wall_column_ids(pixels bytea,mask bytea,w int,h int) RETURNS int[]
 LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     WITH ids AS (
@@ -55,5 +55,5 @@ CREATE TABLE doom.art (
     UNIQUE(level,kind,name)
 );
 
--- Uncompressed TOAST storage lets substring fetch just the visible columns.
+-- uncompressed toast storage lets substring fetch just the visible columns.
 ALTER TABLE doom.art ALTER COLUMN quads SET STORAGE EXTERNAL;

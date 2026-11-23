@@ -14,7 +14,7 @@ RETURN int8send(
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+6]))::bigint << 8)
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+7]))::bigint << 0));
 
--- Match the column renderer's rounding at texel boundaries.
+-- match the column renderer's rounding at texel boundaries.
 CREATE FUNCTION doom.flat_eight(data bytea,px float8,py float8,rx float8[],ry float8[],z float8,i int)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 RETURN int8send(
@@ -57,7 +57,7 @@ $$;
 CREATE TRIGGER compile_plane_tables AFTER UPDATE OF revision,lighting ON doom.levels
 FOR EACH ROW EXECUTE FUNCTION doom.compile_plane_tables();
 
--- Pack twenty 32x32 tiles, transpose their bytes together with five bit
+-- pack twenty 32x32 tiles, transpose their bytes together with five bit
 -- permutations, then join the four vertical pieces of each screen column.
 CREATE TABLE doom.transpose_masks (masks varbit[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton));
 INSERT INTO doom.transpose_masks

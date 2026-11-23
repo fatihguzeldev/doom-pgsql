@@ -19,7 +19,7 @@ BEGIN
         yaw=excluded.yaw,sector=excluded.sector,openings=excluded.openings,background=excluded.background,
         illumination=excluded.illumination,depths=excluded.depths,far_z=excluded.far_z;
     DELETE FROM doom.view_edges WHERE game=g;
-    -- Widen the frustum to cover both ends of the yaw bucket.
+    -- widen the frustum to cover both ends of the yaw bucket.
     INSERT INTO doom.view_edges
     SELECT g,bucket,coalesce(array_agg(e ORDER BY e.line) FILTER(WHERE
         greatest(z0*spread+r0,z1*spread+r1)>=-1e-7 AND greatest(z0*spread-r0,z1*spread-r1)>=-1e-7),'{}'::doom.edge[])

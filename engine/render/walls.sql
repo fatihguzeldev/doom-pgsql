@@ -10,8 +10,8 @@ RETURN int8send(
     | (get_byte(data,base+(floor(v+(i+6)*step)::int & mask))::bigint << 8)
     | (get_byte(data,base+(floor(v+(i+7)*step)::int & mask))::bigint << 0));
 
--- With an integral texture anchor, row y addresses floor(anchor+(y-49.5)*step).
--- A texel can change only at 2*k / abs(2*y-99).
+-- with an integral texture anchor, row y addresses floor(anchor+(y-49.5)*step).
+-- a texel can change only at 2*k / abs(2*y-99).
 CREATE TABLE doom.wall_scales (cuts float8[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton));
 INSERT INTO doom.wall_scales
 SELECT array_agg(DISTINCT cut ORDER BY cut),true FROM (
@@ -19,7 +19,7 @@ SELECT array_agg(DISTINCT cut ORDER BY cut),true FROM (
         LATERAL generate_series(0,den) k
 ) bounds;
 
--- One offset per four screen rows. The high bits select the first texel;
+-- one offset per four screen rows. the high bits select the first texel;
 -- the low four bits select its substring in the compiled texture word.
 ALTER TABLE doom.wall_scales ADD COLUMN quads smallint[];
 WITH ranges AS (SELECT idx,(cut+lead(cut) OVER (ORDER BY idx))/2 AS step FROM doom.wall_scales,
@@ -59,7 +59,6 @@ RETURN
     ||substring(atlas FROM 1+col+((anchor+offsets[i+23]) & mask) FOR 4)
     ||substring(atlas FROM 1+col+((anchor+offsets[i+24]) & mask) FOR 4);
 
--- If floor(v+i*dv) advances one row per sample, copy the column up to the next wrap.
 CREATE FUNCTION doom.column_samples(colors bytea,w int,h int,u float8,v float8,dv float8,n int)
 RETURNS bytea LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE AS $$
 DECLARE
@@ -103,7 +102,7 @@ BEGIN
 END;
 $$;
 
--- First sampled row at or beyond a post boundary. Check the forward expression
+-- first sampled row at or beyond a post boundary. check the forward expression
 -- at the estimate so division cannot move an exact texel boundary by one pixel.
 CREATE FUNCTION doom.post_row(edge int,v float8,dv float8,n int) RETURNS int
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$

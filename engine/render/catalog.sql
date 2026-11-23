@@ -28,10 +28,11 @@ INSERT INTO doom.screen SELECT ARRAY(SELECT atan((x-79.5)/80) FROM generate_seri
     ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y),
     ARRAY(SELECT decode(repeat(lpad(to_hex(i),2,'0'),100),'hex') FROM generate_series(0,31)i),true;
 
+-- kinds: 0 plane (v is world height), 1 solid wall, 2 sky, 3 masked wall, 4 sprite.
 CREATE TYPE doom.stroke AS (
     x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int
 );
--- Sprites are drawn separately. A moving door can change the background even when the camera is still.
+-- a moving door invalidates the background even when the camera is still.
 CREATE TABLE doom.view_cache (
     game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, revision bigint NOT NULL,
     x float8 NOT NULL,y float8 NOT NULL,z float8 NOT NULL,yaw float8 NOT NULL,sector int NOT NULL,
