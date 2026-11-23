@@ -10,9 +10,11 @@ services:
       - ./engine:/app/engine:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-d", "doom", "-U", "postgres"]
-      interval: 1s
+      start_period: 1m
+      start_interval: 1s
+      interval: 30s
       timeout: 5s
-      retries: 60
+      retries: 3
 
   play:
     build: .
