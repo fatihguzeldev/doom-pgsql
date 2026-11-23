@@ -15,7 +15,7 @@
     ],
     "iwad_md5": "f0cefca49926d00903cf57551d901abe"
   },
-  "method": "Local Docker PostgreSQL 17. Each trial started in a fresh database containing E1M1 and E1M3 with statistics collected after import. Trials 1 through 3 cloned analyzed templates. E1M3 pair 4 used separate freshly installed databases in a second, dedicated container. Ran bench/replay.py sequentially, E1M3 for 60 seconds at skill 3, then E1M1 to its exit at skill 1. The reader counted distinct SQL pixel/shade pairs before the deadline while the writer committed live input. Summary rates pool total counts over total elapsed time.",
+  "method": "Each trial used a fresh local Docker database with both maps analyzed after import. Pairs 1–3 cloned templates and ran bench/replay.py on E1M3 (60 seconds, skill 3), then E1M1 (to the exit, skill 1). E1M3 pair 4 used fresh installs in a dedicated second container. FPS counts distinct pixel/shade pairs received before the deadline while inputs committed. Rates use total counts divided by total elapsed time.",
   "trial_order": [
     "old1",
     "new1",
@@ -285,12 +285,12 @@
     },
     "all_episode_maps": {
       "matching_views": 216,
-      "method": "24 moving/turning tics on each of E1M1 through E1M9, comparing pixels and shades across both versions",
+      "method": "Pixel and shade buffers after each of 24 movement and turn tics per map (E1M1–E1M9).",
       "sha256_pixels_and_shades": "797c7922ffd309b7454411ea77aa7f61e5d29d499e7e158b7af2a7378c511949"
     }
   },
   "fixed_tic_timings": {
-    "method": "Single full replay on each revision in unthrottled PostgreSQL 17, one synchronous call per tic and one frame per tic. Elapsed milliseconds, excluding state verification.",
+    "method": "One full replay per revision on unthrottled PostgreSQL 17. One synchronous tic call and one frame per tic. Elapsed times exclude state checks.",
     "E1M3": {
       "reference": {
         "ticks_ms": 896.08,
@@ -314,7 +314,7 @@
   },
   "bsp_experiment": {
     "postgresql": "15.13 local arm64, without a CPU quota",
-    "method": "On the same intermediate renderer, compared the portal walk with and without a conservative WAD BSP frustum filter. Each linedef was assigned to a leaf and ancestor bounds enclosed its full extent. One full replay per configuration, one frame per tic. Both reproduced all reference images and game states.",
+    "method": "One replay per configuration on the same intermediate renderer. The WAD BSP frustum filter assigned each linedef to one leaf and extended its ancestor bounds to cover the whole line. Both portal walks matched the reference frame and game state at every tic.",
     "frame_ms": {
       "E1M3": {
         "portal": 2612.57,
@@ -328,7 +328,7 @@
   },
   "shared_quota_replay": {
     "map": "E1M3",
-    "method": "Pair 3 was replaced as a pair, and both original runs are retained here. The candidate E1M3 run overlapped auto-vacuum on the two unrelated databases used for frame verification. The E1M1 trial followed the overlapping vacuums.",
+    "method": "Autovacuum on two verification databases overlapped the E1M3 candidate run in pair 3. Pair 4 replaced both runs in the summary. E1M1 ran after autovacuum finished.",
     "candidate_benchmark_utc": [
       "2026-11-23T15:21:19.710Z",
       "2026-11-23T15:22:19.710Z"
@@ -383,7 +383,7 @@
     }
   },
   "interleaved_fixed_tics": {
-    "method": "Isolated unthrottled PostgreSQL 17. Both databases were warmed at spawn and then processed exactly the same inputs, one frame per tic. Measurement order alternated reference-first / candidate-first on every tic. Elapsed SQL round-trip milliseconds, summed per route. Every pair of frame buffers matched.",
+    "method": "Isolated, unthrottled PostgreSQL 17. After warmup at spawn, both revisions replayed the same inputs, rendering one frame per tic and alternating which ran first. All frames matched. Times sum SQL round trips per route.",
     "routes": {
       "E1M3": {
         "frames": 1025,
@@ -411,5 +411,5 @@
       }
     }
   },
-  "candidate_note": "The first two candidate runs also filtered degenerate linedefs before testing ray intersections. The final candidate uses the zero-denominator check alone, which also preserves very short edited lines. All original shareware linedefs have integral endpoints."
+  "candidate_note": "Runs 1 and 2 also filtered degenerate linedefs before ray intersections. The final version checks only for a zero denominator, preserving very short edited lines. Shareware linedefs have integer endpoints."
 }

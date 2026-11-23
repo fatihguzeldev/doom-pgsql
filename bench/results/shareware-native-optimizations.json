@@ -18,10 +18,10 @@
     "bench/ps5.sh /path/to/doom1.wad 60 E1M3",
     "bench/ps5.sh /path/to/doom1.wad 180 E1M1"
   ],
-  "metric": "Number of distinct SQL pixel and shade buffer pairs received before the deadline divided by elapsed time. Renderer and simulation run concurrently.",
+  "metric": "Distinct SQL pixel/shade buffer pairs received during the run, divided by elapsed seconds. Simulation and rendering run concurrently.",
   "workloads": {
     "E1M3": {
-      "route": "60 seconds at skill 3",
+      "route": "60-second replay",
       "skill": 3,
       "reference_runs": [
         {
@@ -137,7 +137,7 @@
       }
     },
     "E1M1": {
-      "route": "Recorded 683-tic Hangar exit at skill 1, timed until the final acknowledgment.",
+      "route": "683-tic Hangar exit replay, timed through the final acknowledgment.",
       "skill": 1,
       "reference_runs": [
         {
@@ -240,7 +240,7 @@
       "median_frame_request_ms": 66.54141610488296,
       "median_input_batch_ms": 64.54260414466262
     },
-    "context": "Recorded before the final edit-preservation fix. Separate verification work ran on the host. Excluded from the final pooled figures."
+    "context": "This run predates the fix for preserving edited yaw and shared the host with verification work. Pooled rates exclude it."
   },
   "frame_equivalence": {
     "E1M1": {
@@ -257,7 +257,7 @@
     }
   },
   "fixed_tic_timings": {
-    "method": "Elapsed milliseconds in synchronous SQL calls on the local development database without a CPU quota. Each map was played through the same tics with one full frame per tic including spawn, excluding state verification from these timings. One run per revision.",
+    "method": "Each revision replayed the same tics once on the uncapped local database, rendering spawn and every tic. Timings cover synchronous SQL calls and exclude state checks.",
     "E1M3": {
       "baseline": {
         "ticks_ms": 642.8,

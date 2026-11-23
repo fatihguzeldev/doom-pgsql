@@ -13,7 +13,7 @@
   "skill": 3,
   "width": 160,
   "height": 100,
-  "unique_fps_definition": "Distinct pairs of SQL-rendered pixel and shade buffers received within the timed window, divided by elapsed seconds.",
+  "unique_fps_definition": "Distinct SQL pixel/shade buffer pairs received during the run, divided by elapsed seconds.",
   "runs": [
     {
       "backend_cpu_ms_including_drain": {

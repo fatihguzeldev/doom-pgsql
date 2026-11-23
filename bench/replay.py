@@ -1,4 +1,4 @@
-"""Measure native frames and acknowledged tics through PostgreSQL's public game API."""
+"""Measure distinct SQL frames and acknowledged game tics per second."""
 
 import argparse
 import hashlib
@@ -174,7 +174,7 @@ def main():
         "--rtt-ms",
         type=float,
         default=50,
-        help="added delay split between each request and response",
+        help="add half the delay before each request and half after its response",
     )
     args = parser.parse_args()
     if args.seconds <= 0 or args.rtt_ms < 0:
