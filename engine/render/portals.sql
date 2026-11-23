@@ -118,7 +118,7 @@ CREATE TYPE doom.stroke AS (
 CREATE TABLE doom.view_cache (
     game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, revision bigint NOT NULL,
     x float8 NOT NULL,y float8 NOT NULL,z float8 NOT NULL,yaw float8 NOT NULL,sector int NOT NULL,
-    openings text NOT NULL, strokes doom.stroke[] NOT NULL
+    openings text NOT NULL, background bytea, illumination bytea, depths float8[], far_z float8
 );
 CREATE TABLE doom.view_edges (
     game bigint REFERENCES doom.view_cache ON DELETE CASCADE,bucket int,edges doom.edge[] NOT NULL,

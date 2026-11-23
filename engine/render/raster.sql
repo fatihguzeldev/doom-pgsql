@@ -128,8 +128,8 @@ $$;
 CREATE TRIGGER compile_plane_tables AFTER UPDATE OF revision,lighting ON doom.levels
 FOR EACH ROW EXECUTE FUNCTION doom.compile_plane_tables();
 
-CREATE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
-RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea)
+CREATE FUNCTION doom.raster(gid bigint,generation bigint,slot bigint,background_only boolean)
+RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea,scene_depth float8[])
 LANGUAGE plpgsql STABLE STRICT SET jit=off SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     p bigint;
@@ -146,6 +146,9 @@ DECLARE
     stroke doom.stroke;
     strokes doom.stroke[];
     world doom.stroke[];
+    base_color bytea;
+    base_light bytea;
+    base_depth float8[];
     horizon float8;
     rev bigint;
     plane_keys int[];
@@ -190,16 +193,31 @@ BEGIN
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
     SELECT least(32,length(lighting)/256)-1,revision INTO bands,rev FROM doom.levels WHERE id=p;
     camera_x:=body.pos[0]; camera_y:=-body.pos[1];
-    SELECT c.strokes INTO world FROM doom.view_cache c WHERE c.game=gid AND c.revision=rev AND c.sector=body.sector
-        AND c.x=camera_x AND c.y=body.pos[1] AND c.yaw=body.yaw AND c.z=body.z AND c.openings=doom.opening_key(gid);
-    IF world IS NULL THEN SELECT array_agg(s) INTO world FROM doom.world_strokes(p,gid,body,fx,fy)s; END IF;
-    SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
-        CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
-    ) ELSE 'Infinity'::float8 END INTO horizon FROM unnest(world);
+    IF NOT background_only THEN
+        SELECT c.background,c.illumination,c.depths,c.far_z INTO base_color,base_light,base_depth,horizon
+        FROM doom.view_cache c WHERE c.game=gid AND c.revision=rev AND c.sector=body.sector AND c.x=camera_x
+            AND c.y=body.pos[1] AND c.yaw=body.yaw AND c.z=body.z AND c.openings=doom.opening_key(gid);
+    END IF;
+    IF base_color IS NULL THEN
+        SELECT array_agg(s) INTO world FROM doom.world_strokes(p,gid,body,fx,fy)s;
+        SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
+            CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
+        ) ELSE 'Infinity'::float8 END INTO horizon FROM unnest(world);
+    END IF;
     SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0) INTO strokes FROM (
         SELECT * FROM unnest(world) UNION ALL
-        SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)
+        SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon) WHERE NOT background_only
     ) s;
+    width:=160; height:=100; frame_slot:=slot;
+    IF base_color IS NOT NULL THEN
+        IF strokes IS NULL THEN pixels:=base_color; shades:=base_light; RETURN NEXT; RETURN; END IF;
+        FOR x IN 0..159 LOOP
+            colors[x]:=substring(base_color FROM x*100+1 FOR 100);
+            lights[x]:=substring(base_light FROM x*100+1 FOR 100);
+        END LOOP;
+    ELSIF background_only THEN
+        scene_depth:=array_fill('Infinity'::float8,ARRAY[16000]);
+    END IF;
     -- Each plane has a single depth and light per scanline, across its entire width.
     SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
     INTO plane_keys,planes
@@ -215,10 +233,16 @@ BEGIN
     SELECT array_agg(x) INTO overlay_columns FROM (SELECT DISTINCT x FROM unnest(strokes) WHERE kind>=3) overlay_cols;
     FOREACH stroke IN ARRAY coalesce(strokes,'{}') LOOP
         IF stroke.x<>this_x THEN
-            IF this_x>=0 THEN colors[this_x]:=column_data; lights[this_x]:=column_light; END IF;
-            this_x:=stroke.x; column_data:=empty_column; column_light:=empty_column;
-            has_overlay:=coalesce(this_x=ANY(overlay_columns),false);
-            IF has_overlay THEN zbuffer:=array_fill('Infinity'::float8,ARRAY[100],ARRAY[0]); END IF;
+            IF this_x>=0 THEN
+                colors[this_x]:=column_data; lights[this_x]:=column_light;
+                IF background_only THEN scene_depth[1+100*this_x:100*(this_x+1)]:=zbuffer; END IF;
+            END IF;
+            this_x:=stroke.x; column_data:=colors[this_x]; column_light:=lights[this_x];
+            has_overlay:=background_only OR coalesce(this_x=ANY(overlay_columns),false);
+            IF has_overlay THEN
+                zbuffer:=array_fill('Infinity'::float8,ARRAY[100],ARRAY[0]);
+                IF base_depth IS NOT NULL THEN zbuffer[0:99]:=base_depth[100*this_x+1:100*(this_x+1)]; END IF;
+            END IF;
             sx:=fx+fy*(this_x-79.5)/80; sy:=fy-fx*(this_x-79.5)/80;
         END IF;
         tex:=bank[stroke.art-first_art+1];
@@ -274,11 +298,20 @@ BEGIN
             END IF;
         END IF;
     END LOOP;
-    IF this_x>=0 THEN colors[this_x]:=column_data; lights[this_x]:=column_light; END IF;
+    IF this_x>=0 THEN
+                colors[this_x]:=column_data; lights[this_x]:=column_light;
+                IF background_only THEN scene_depth[1+100*this_x:100*(this_x+1)]:=zbuffer; END IF;
+            END IF;
     SELECT string_agg(c,''::bytea ORDER BY i),string_agg(l,''::bytea ORDER BY i) INTO pixels,shades
     FROM unnest(colors,lights) WITH ORDINALITY b(c,l,i);
-    width:=160; height:=100; frame_slot:=slot; RETURN NEXT;
+    RETURN NEXT;
 END;
+$$;
+
+CREATE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
+RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea)
+LANGUAGE sql STABLE AS $$
+    SELECT r.epoch,r.tic,r.frame_slot,r.width,r.height,r.pixels,r.shades FROM doom.raster(gid,generation,slot,false)r;
 $$;
 
 CREATE FUNCTION doom.frame_palette(gid bigint) RETURNS bytea LANGUAGE sql STABLE STRICT AS $$

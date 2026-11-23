@@ -9,6 +9,7 @@ DECLARE
     key text;
     packet record;
     known text[];
+    reference bytea;
 BEGIN
     SELECT decode(string_agg(lpad(to_hex(i),2,'0'),'' ORDER BY i),'hex') INTO lighting FROM generate_series(0,255)i;
     INSERT INTO doom.levels(name,palette,lighting,sector_count)
@@ -42,6 +43,14 @@ BEGIN
     known[2]:=NULL;
     SELECT * INTO packet FROM doom.poll_tiles(g,1,2,key,known);
     ASSERT packet.tiles=ARRAY[1] AND packet.pixels=substring(pic FROM 801 FOR 800);
+    PERFORM doom.anchor_view(g);
+    ASSERT (SELECT pixels=pic FROM doom.frame(g,1,1)),'cached geometry changed the scene';
+    UPDATE doom.actors SET pos=point(100,13) WHERE game=g AND id=1;
+    SELECT pixels INTO reference FROM doom.frame(g,1,1);
+    DELETE FROM doom.view_cache WHERE game=g;
+    ASSERT (SELECT pixels=reference FROM doom.frame(g,1,1)),'moving sprite was clipped differently against the cached depth buffer';
+    UPDATE doom.actors SET pos=point(100,0) WHERE game=g AND id=1;
+    PERFORM doom.anchor_view(g);
     ASSERT length(pic)=16000;
     ASSERT get_byte(pic,8050)=55 AND get_byte(pic,8051)=49,'masked sprite must show both the far wall and its opaque texel';
     ASSERT get_byte(pic,8099)=4 AND get_byte(pic,8000)=5,'floor and ceiling';
