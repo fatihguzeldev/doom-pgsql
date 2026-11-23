@@ -1,6 +1,6 @@
 CREATE TYPE doom.edge AS (
     line int, dest int, a point, dx float8, dy float8, len float8,
-    flags int, special int, tag int, u int, v int, upper_id int, lower_id int, mid_id int
+    flags int, special int, tag int, u int, v int, upper_id int, lower_id int, mid_id int, upper_h int, mid_h int
 );
 CREATE TABLE doom.mesh (
     level bigint REFERENCES doom.levels ON DELETE CASCADE, sector int,
@@ -39,7 +39,7 @@ BEGIN
     DELETE FROM doom.mesh WHERE level=p;
     WITH directed AS (
         SELECT l.id,side.sector,opposite.sector AS dest,start_pt,finish_pt,l.flags,l.special,l.tag,side.u,side.v,
-            hi.id AS upper_id,lo.id AS lower_id,mid.id AS mid_id
+            hi.id AS upper_id,lo.id AS lower_id,mid.id AS mid_id, hi.h AS upper_h,mid.h AS mid_h
         FROM doom.lines l CROSS JOIN LATERAL (VALUES(l.front,l.back,l.a,l.b),(l.back,l.front,l.b,l.a)) f(s,o,start_pt,finish_pt)
         JOIN doom.sides side ON side.level=p AND side.id=f.s
         LEFT JOIN doom.sides opposite ON opposite.level=p AND opposite.id=f.o
@@ -51,7 +51,7 @@ BEGIN
         SELECT sector,box(point(min(least(start_pt[0],finish_pt[0])),min(least(start_pt[1],finish_pt[1]))),
                           point(max(greatest(start_pt[0],finish_pt[0])),max(greatest(start_pt[1],finish_pt[1])))) AS bounds,
             array_agg(ROW(id,dest,start_pt,finish_pt[0]-start_pt[0],finish_pt[1]-start_pt[1],start_pt<->finish_pt,
-                flags,special,tag,u,v,upper_id,lower_id,mid_id)::doom.edge ORDER BY id) AS edges
+                flags,special,tag,u,v,upper_id,lower_id,mid_id,upper_h,mid_h)::doom.edge ORDER BY id) AS edges
         FROM directed GROUP BY sector)
     INSERT INTO doom.mesh(level,sector,bounds,edges,floor_id,ceiling_id,sky)
     SELECT p,s.id,d.bounds,d.edges,f.id,c.id,s.ceiling_tex='F_SKY1'

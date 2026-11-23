@@ -87,6 +87,29 @@ END;
 $$;
 
 CREATE TYPE doom.room AS (z_floor float8,z_ceil float8,light int,floor_id int,ceil_id int,sky boolean);
+CREATE TABLE doom.room_catalog (
+    level bigint PRIMARY KEY REFERENCES doom.levels ON DELETE CASCADE, rooms doom.room[] NOT NULL
+);
+CREATE FUNCTION doom.publish_rooms() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO doom.room_catalog
+    SELECT NEW.id,array_agg(CASE WHEN s.id IS NOT NULL THEN ROW(s.floor_z,s.ceiling_z,s.light,
+        b.floor_id,b.ceiling_id,b.sky)::doom.room END ORDER BY i)
+    FROM generate_series(0,(SELECT max(id) FROM doom.sectors WHERE level=NEW.id)) i
+    LEFT JOIN doom.sectors s ON s.level=NEW.id AND s.id=i
+    LEFT JOIN doom.mesh b ON b.level=NEW.id AND b.sector=i
+    HAVING count(*)>0
+    ON CONFLICT(level) DO UPDATE SET rooms=excluded.rooms;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER publish_rooms AFTER UPDATE OF revision ON doom.levels FOR EACH ROW EXECUTE FUNCTION doom.publish_rooms();
+CREATE TABLE doom.screen (
+    sky_angles float8[] NOT NULL, row_scale float8[] NOT NULL, singleton boolean PRIMARY KEY CHECK(singleton)
+);
+INSERT INTO doom.screen SELECT ARRAY(SELECT atan((x-79.5)/80) FROM generate_series(0,159)x),
+    ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y),true;
+
 CREATE TYPE doom.stroke AS (
     x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int
 );
@@ -101,6 +124,8 @@ DECLARE
     e doom.edge;
     edges doom.edge[];
     rooms doom.room[];
+    moving doom.movers;
+    sky_angles float8[];
     front doom.room;
     back doom.room;
     top_clip int[]:=array_fill(0,ARRAY[160],ARRAY[0]);
@@ -112,11 +137,12 @@ DECLARE
     open_from int; low_z float8; high_z float8; origin_z float8; texture_h int;
     y0 int; y1 int;
 BEGIN
-    SELECT array_agg(CASE WHEN s.id IS NOT NULL THEN ROW(coalesce(m.floor_z,s.floor_z),coalesce(m.ceiling_z,s.ceiling_z),
-        s.light,b.floor_id,b.ceiling_id,b.sky)::doom.room END ORDER BY i) INTO rooms
-    FROM generate_series(0,(SELECT max(id) FROM doom.sectors WHERE level=p)) i
-    LEFT JOIN doom.sectors s ON s.level=p AND s.id=i
-    LEFT JOIN doom.mesh b ON b.level=p AND b.sector=i LEFT JOIN doom.movers m ON m.game=g AND m.sector=i;
+    SELECT c.rooms INTO STRICT rooms FROM doom.room_catalog c WHERE c.level=p;
+    SELECT s.sky_angles INTO sky_angles FROM doom.screen s;
+    FOR moving IN SELECT * FROM doom.movers WHERE game=g LOOP
+        front:=rooms[1+moving.sector]; front.z_floor:=moving.floor_z; front.z_ceil:=moving.ceiling_z;
+        rooms[1+moving.sector]:=front;
+    END LOOP;
     WHILE tail>0 LOOP
         win:=queue[tail]; tail:=tail-1;
         CONTINUE WHEN position(B'1' IN substring(open_bits FROM win.lo+1 FOR win.hi-win.lo+1))=0;
@@ -134,7 +160,7 @@ BEGIN
                     bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)::int));
                     IF y0<top_y THEN
                         IF front.sky THEN RETURN NEXT (x,y0,top_y,2,front.ceil_id,
-                            (body.yaw-atan((x-79.5)/80))*512/pi(),0,1,depth,255)::doom.stroke;
+                            (body.yaw-sky_angles[1+x])*512/pi(),0,1,depth,255)::doom.stroke;
                         ELSE RETURN NEXT (x,y0,top_y,0,front.ceil_id,0,front.z_ceil,0,depth,front.light)::doom.stroke; END IF;
                     END IF;
                     IF bottom_y<y1 THEN RETURN NEXT (x,bottom_y,y1,0,front.floor_id,0,front.z_floor,0,depth,front.light)::doom.stroke; END IF;
@@ -142,7 +168,7 @@ BEGIN
                         IF top_y<bottom_y THEN
                             origin_z:=front.z_ceil;
                             IF (e.flags&16)<>0 THEN
-                                SELECT h INTO texture_h FROM doom.art WHERE id=e.mid_id;
+                                texture_h:=e.mid_h;
                                 origin_z:=front.z_floor+coalesce(texture_h,0);
                             END IF;
                             RETURN NEXT (x,top_y,bottom_y,1,e.mid_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
@@ -154,7 +180,7 @@ BEGIN
                             greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)::int)) END;
                         IF top_y<top_open THEN
                             origin_z:=front.z_ceil;
-                            IF (e.flags&8)=0 THEN SELECT h INTO texture_h FROM doom.art WHERE id=e.upper_id;
+                            IF (e.flags&8)=0 THEN texture_h:=e.upper_h;
                                 origin_z:=back.z_ceil+coalesce(texture_h,0); END IF;
                             RETURN NEXT (x,top_y,top_open,1,e.upper_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
                         END IF;
@@ -164,7 +190,7 @@ BEGIN
                         END IF;
                         IF e.mid_id IS NOT NULL AND top_open<bottom_open THEN
                             origin_z:=high_z;
-                            IF (e.flags&16)<>0 THEN SELECT h INTO texture_h FROM doom.art WHERE id=e.mid_id; origin_z:=low_z+texture_h; END IF;
+                            IF (e.flags&16)<>0 THEN texture_h:=e.mid_h; origin_z:=low_z+texture_h; END IF;
                             RETURN NEXT (x,top_open,bottom_open,3,e.mid_id,u,e.v+origin_z-eye+(top_open-49.5)*dv,dv,depth,front.light)::doom.stroke;
                         END IF;
                         top_clip[x]:=top_open; bottom_clip[x]:=bottom_open;

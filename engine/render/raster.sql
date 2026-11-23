@@ -70,7 +70,7 @@ DECLARE
     sx float8;
     sy float8;
     eye float8;
-    row_scale float8[]:=ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y);
+    row_scale float8[];
     stroke doom.stroke;
     strokes doom.stroke[];
     world doom.stroke[];
@@ -106,6 +106,7 @@ BEGIN
     SELECT g.epoch,g.tic,g.level INTO STRICT epoch,tic,p FROM doom.games g WHERE g.id=gid;
     SELECT * INTO STRICT body FROM doom.actors WHERE game=gid AND id=-1;
     IF epoch<>generation OR slot<0 THEN RAISE EXCEPTION 'invalid frame generation or slot' USING ERRCODE='22023'; END IF;
+    SELECT screen.row_scale INTO row_scale FROM doom.screen;
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
     SELECT least(32,length(lighting)/256)-1 INTO bands FROM doom.levels WHERE id=p;
     camera_x:=body.pos[0]; camera_y:=-body.pos[1];
