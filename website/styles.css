@@ -1,0 +1,273 @@
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("assets/fonts/atkinson-hyperlegible-next.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("assets/fonts/geist-mono.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --canvas: #120e17;
+  --ink: #ebded5;
+  --muted: #bcaebd;
+  --rule: #49384f;
+  --surface: #1d1624;
+  --copper: #e58c5f;
+  --steel: #b5b4ff;
+  --amber: #ffd189;
+  --body-font: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --code-font: "Geist Mono", ui-monospace, monospace;
+  --gutter: clamp(1rem, 4vw, 3rem);
+  --cover-width: 42rem;
+  --frame-width: 40rem;
+  --reading-width: 39rem;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font: 400 1.125rem/1.62 var(--body-font);
+}
+
+a {
+  color: var(--steel);
+  text-underline-offset: .2em;
+}
+
+a:hover {
+  color: var(--amber);
+}
+
+a:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 3px;
+}
+
+img {
+  display: block;
+  max-inline-size: 100%;
+  block-size: auto;
+}
+
+.book-home,
+.chapter-shell {
+  inline-size: min(calc(100% - 2 * var(--gutter)), var(--cover-width));
+  margin-inline: auto;
+}
+
+.book-home {
+  padding-block: clamp(2rem, 6vw, 4rem) clamp(2rem, 6vw, 4.5rem);
+}
+
+.wordmark,
+.cover-frame {
+  margin: 0;
+}
+
+.wordmark img,
+.cover-frame img {
+  inline-size: 100%;
+}
+
+.wordmark img,
+.cover-frame img,
+.chapter-home img {
+  image-rendering: pixelated;
+}
+
+.cover-frame,
+.chapter-index {
+  max-inline-size: var(--frame-width);
+  margin-inline: auto;
+}
+
+.cover-frame {
+  margin-block-start: clamp(1.375rem, 3vw, 2rem);
+  outline: 1px solid var(--rule);
+}
+
+.chapter-index {
+  margin-block-start: clamp(2rem, 5vw, 3.5rem);
+}
+
+.chapter-index h2 {
+  margin: 0 0 .625rem;
+  color: var(--copper);
+  font: 500 1rem/1.4 var(--code-font);
+  scroll-margin-block-start: 1rem;
+}
+
+.chapter-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-block: 1px solid var(--rule);
+}
+
+.chapter-list a,
+.chapter-switcher a {
+  display: grid;
+  place-items: center;
+  gap: .45rem;
+  min-block-size: 3rem;
+  padding: .5rem;
+  color: var(--ink);
+  text-decoration: none;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.chapter-list li + li {
+  border-inline-start: 1px solid var(--rule);
+}
+
+.chapter-list a:hover,
+.chapter-switcher a:hover {
+  background: var(--surface);
+  color: var(--amber);
+}
+
+.chapter-list a:focus-visible,
+.chapter-switcher a:focus-visible {
+  outline-offset: -2px;
+}
+
+.chapter-number {
+  font: 500 .9375rem/1.35 var(--code-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: .625rem 1rem;
+  padding-block: 1.25rem;
+  border-block-end: 1px solid var(--rule);
+}
+
+.chapter-home {
+  display: grid;
+  place-items: center;
+  min-block-size: 3rem;
+  inline-size: 12rem;
+  max-inline-size: 100%;
+}
+
+.chapter-switcher {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(3rem, 1fr));
+}
+
+.chapter-switcher a[aria-current="page"] {
+  color: var(--steel);
+  text-decoration: underline;
+  text-underline-offset: .38em;
+}
+
+.chapter-body {
+  max-inline-size: var(--reading-width);
+  margin-inline: auto;
+  padding-block: clamp(2rem, 6vw, 4rem);
+  overflow-wrap: anywhere;
+}
+
+.chapter-body > :first-child {
+  margin-block-start: 0;
+}
+
+.chapter-body :where(h1, h2, h3) {
+  line-height: 1.16;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.chapter-body :where(h1, h2) {
+  margin-block: 1.75em .55em;
+}
+
+.chapter-body h1 {
+  font-size: clamp(2.25rem, 5.5vw, 3.25rem);
+  letter-spacing: -.025em;
+}
+
+.chapter-body h2 {
+  font-size: clamp(1.625rem, 4vw, 2.125rem);
+  letter-spacing: -.015em;
+}
+
+.chapter-body p {
+  margin-block: 1rem;
+  text-wrap: pretty;
+}
+
+.chapter-body code {
+  color: var(--steel);
+  font: 500 .84em var(--code-font);
+}
+
+.chapter-body pre {
+  margin-block: 1.5rem;
+  padding: .875rem 1rem;
+  overflow: auto;
+  border-inline-start: 2px solid var(--steel);
+  background: var(--surface);
+  font: 400 .875rem/1.65 var(--code-font);
+}
+
+.chapter-body pre code {
+  color: inherit;
+  font: inherit;
+}
+
+.chapter-body figure {
+  margin: 1.75rem 0;
+}
+
+.chapter-body figcaption {
+  margin-block-start: .5rem;
+  color: var(--muted);
+  font-size: .9375rem;
+}
+
+.chapter-body table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: .9375rem;
+}
+
+.chapter-body :where(th, td) {
+  padding: .5rem .625rem;
+  border-block-end: 1px solid var(--rule);
+  text-align: start;
+  vertical-align: baseline;
+}
+
+@media (max-width: 30rem) {
+  .chapter-header {
+    justify-content: center;
+    padding-block-end: .5rem;
+  }
+
+  .chapter-switcher {
+    inline-size: 100%;
+  }
+}
