@@ -148,10 +148,11 @@ async def play_session(session, display, keys, maps, started):
         world = session.world
         presenter = session.presenter
         if presenter is not None:
-            view = presenter.sample(now)
+            yaw = session.pose[2] if session.pose is not None else None
+            view = presenter.sample(now, yaw, (*session.turns.values(), keys.pending_turn(now)))
             world = view.image if view is not None else None
         if world is not None and session.status:
-            turn = sum(session.turns.values()) if session.predict_turn else 0
+            turn = sum(session.turns.values()) if presenter is None and session.predict_turn else 0
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
                 age = None

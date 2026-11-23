@@ -218,7 +218,7 @@ class Session:
             start = monotonic()
             command = self.keys.sample(start)
             tic += 1
-            if self.predict_turn and command[2]:
+            if (self.predict_turn or self.presenter is not None) and command[2]:
                 self.turns[tic] = command[2]
             await self.pending.put(command)
             await asyncio.sleep(max(0, 1 / 35 - (monotonic() - start)))
@@ -242,7 +242,7 @@ class Session:
                             if self.presenter is not None:
                                 if self.frames.revision != prior_revision:
                                     self.presenter.reset()
-                                self.presenter.submit(self.world, packet["tic"], now)
+                                self.presenter.submit(self.world, packet["tic"], now, packet["yaw"])
                         for tic in tuple(self.turns):
                             if tic <= packet["tic"]:
                                 del self.turns[tic]

@@ -1,11 +1,14 @@
 import asyncio
+import math
 import threading
 import unittest
+from importlib.util import find_spec
 from time import monotonic
 from unittest.mock import patch
 
 from examples.terminal.art import Image
-from examples.terminal.presentation import Presenter
+from examples.terminal.keyboard import Keyboard
+from examples.terminal.presentation import Presenter, _turn_view
 
 
 def image(value):
@@ -21,6 +24,18 @@ class Model:
 
 
 class PresentationTest(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(find_spec("numpy"), "RIFE preview uses NumPy")
+    def test_left_turn_moves_a_wall_to_the_right(self):
+        wall = b"\x05\x12\x23"
+        sky = b"\x03\x06\x09"
+        row = sky * 31 + wall * 2 + sky * 31
+        view = Image(64, 40, row * 40)
+        for angle, direction in ((90, 1), (-90, -1)):
+            rgb = _turn_view(view, angle).rgb
+            line = rgb[20 * len(row) : 21 * len(row)]
+            self.assertGreater(direction * (line.index(wall) // 3 - 31), 0)
+            self.assertTrue(line.startswith(sky) and line.endswith(sky))
+
     async def ready(self, presenter):
         async with asyncio.timeout(2):
             while not presenter._schedule:
@@ -77,3 +92,50 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
             finish.set()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    async def test_key_preview_reconciles_across_the_yaw_wrap(self):
+        player, keys = Presenter(Model()), Keyboard()
+        task = asyncio.create_task(player.run())
+        a = math.tau - 0.03
+        b = 0.06
+        with patch("examples.terminal.presentation._turn_view", side_effect=lambda im, angle: im):
+            try:
+                player.submit(image(0), 1, 10, a)
+                await self.ready(player)
+                now = monotonic()
+                base = player.sample(now, a)
+                keys.feed(b"j", now)
+                early = player.sample(now, a, [keys.pending_turn(now)])
+                self.assertAlmostEqual(early.yaw - base.yaw, 0.09)
+                pending = [keys.sample(now)[2], keys.pending_turn(now)]
+                self.assertIs(player.sample(now, a, pending), early)
+
+                player.submit(image(5), 2, 10.2, b)
+                await self.ready(player)
+                mid = player.sample(monotonic(), b)
+                self.assertEqual(mid.fraction, 0.2)
+                self.assertAlmostEqual(math.remainder(mid.yaw - b, math.tau), 0)
+                end = player.sample(monotonic() + 1, b)
+                self.assertAlmostEqual(end.yaw, b)
+                self.assertEqual(end.image, image(5))
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    async def test_reverse_responds_while_the_sql_queue_is_full(self):
+        player = Presenter(Model())
+        task = asyncio.create_task(player.run())
+        with patch("examples.terminal.presentation._turn_view", side_effect=lambda im, angle: im):
+            try:
+                player.submit(image(0), 1, 10, 0)
+                await self.ready(player)
+                now = monotonic()
+                turns = [0.09] * 7
+                held = player.sample(now, 0, turns)
+                reversed_view = player.sample(now, 0, [*turns, -0.09])
+                self.assertAlmostEqual(held.yaw - reversed_view.yaw, 0.09)
+                player.reset()
+                self.assertIsNone(player.sample(now, 0, turns))
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
