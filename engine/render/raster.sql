@@ -34,7 +34,7 @@ END;
 $$;
 
 CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea);
-CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8)
+CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
 RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
     WITH projected AS (
         SELECT a.id,a.art,im.w,im.h,im.origin_x,im.origin_y,a.z,s.light,
@@ -50,7 +50,7 @@ RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
             79.5+(rightward-origin_x+w)*80/nullif(depth,0) AS right_x,
             greatest(0,least(100,ceil(49.5+(body.z+41-top)*80/nullif(depth,0))))::int AS y0,
             greatest(0,least(100,ceil(49.5+(body.z+41-bottom)*80/nullif(depth,0))))::int AS y1
-        FROM projected WHERE depth>0.001
+        FROM projected WHERE depth>0.001 AND depth<=far_z
     )
     SELECT x,y0,y1,4,art,(x-left_x)*depth/80,z+origin_y-body.z-41+(y0-49.5)*depth/80,depth/80,depth,light
     FROM screen,LATERAL generate_series(greatest(0,least(160,ceil(left_x)))::int,
@@ -58,6 +58,7 @@ RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
     WHERE y0<y1;
 $$;
 
+CREATE TYPE doom.plane_lut AS (depths float8[],bands bytea);
 CREATE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea)
 LANGUAGE plpgsql STABLE STRICT SET jit=off AS $$
@@ -72,6 +73,14 @@ DECLARE
     row_scale float8[]:=ARRAY(SELECT 80/abs(y-49.5::float8) FROM generate_series(0,99)y);
     stroke doom.stroke;
     strokes doom.stroke[];
+    world doom.stroke[];
+    horizon float8;
+    plane_keys int[];
+    plane_index int;
+    planes doom.plane_lut[];
+    plane doom.plane_lut;
+    camera_x float8;
+    camera_y float8;
     bank doom.tile[];
     first_art int;
     tex doom.tile;
@@ -90,7 +99,6 @@ DECLARE
     this_x int:=-1;
     has_overlay boolean;
     z float8;
-    eye_delta float8;
     n int;
     idx int;
     shade_run bytea[];
@@ -100,11 +108,23 @@ BEGIN
     IF epoch<>generation OR slot<0 THEN RAISE EXCEPTION 'invalid frame generation or slot' USING ERRCODE='22023'; END IF;
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
     SELECT least(32,length(lighting)/256)-1 INTO bands FROM doom.levels WHERE id=p;
-    SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0)
-    INTO strokes FROM (
-        SELECT * FROM doom.world_strokes(p,gid,body,fx,fy)
-        UNION ALL SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy)
+    camera_x:=body.pos[0]; camera_y:=-body.pos[1];
+    SELECT array_agg(s),CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
+        CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
+    ) ELSE 'Infinity'::float8 END
+    INTO world,horizon FROM doom.world_strokes(p,gid,body,fx,fy)s;
+    SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0) INTO strokes FROM (
+        SELECT * FROM unnest(world) UNION ALL
+        SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)
     ) s;
+    -- Each plane has a single depth and light per scanline, across its entire width.
+    SELECT array_agg(key ORDER BY key),array_agg(ROW(ds,ramp)::doom.plane_lut ORDER BY key)
+    INTO plane_keys,planes FROM (
+        SELECT key,array_agg(projection.z ORDER BY y) AS ds,
+            decode(string_agg(lpad(to_hex(least(bands,(255-light)/8+floor(projection.z/96)::int)),2,'0'),'' ORDER BY y),'hex') AS ramp
+        FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) surfaces,
+        generate_series(0,99)y,LATERAL(SELECT abs(eye-v)*row_scale[y+1] AS z) projection GROUP BY key
+    ) luts;
     -- Read and detoast only the textures actually present in this view.
     SELECT min(art) INTO first_art FROM unnest(strokes);
     SELECT array_agg(CASE WHEN a.id IS NOT NULL THEN ROW(a.w,a.h,substring(a.pixels FROM 1),
@@ -125,19 +145,19 @@ BEGIN
         tex:=bank[stroke.art-first_art+1];
         n:=stroke.y1-stroke.y0; level_light:=(255-stroke.light)/8;
         IF stroke.kind=0 THEN
-            eye_delta:=abs(eye-stroke.v);
-            FOR y IN stroke.y0..stroke.y1-1 LOOP
-                z:=eye_delta*row_scale[y+1];
-                IF tex.pixels IS NOT NULL THEN
-                    -- WAD flats have 64x64 row-major texels, with periodic addressing.
-                    idx:=(floor(body.pos[0]+sx*z)::bigint & 63)+64*(floor(-body.pos[1]-sy*z)::bigint & 63);
+            plane_index:=array_position(plane_keys,stroke.v::int*256+stroke.light);
+            plane:=planes[plane_index];
+            column_light:=overlay(column_light PLACING substring(plane.bands FROM stroke.y0+1 FOR n) FROM stroke.y0+1 FOR n);
+            IF has_overlay THEN zbuffer[stroke.y0:stroke.y1-1]:=plane.depths[stroke.y0+1:stroke.y1]; END IF;
+            IF tex.pixels IS NOT NULL THEN
+                FOR y IN stroke.y0..stroke.y1-1 LOOP
+                    z:=plane.depths[y+1];
+                    idx:=(floor(camera_x+sx*z)::bigint & 63)+64*(floor(camera_y-sy*z)::bigint & 63);
                     column_data:=set_byte(column_data,y,get_byte(tex.pixels,idx));
-                END IF;
-                band:=least(bands,level_light+floor(z/96)::int);
-                column_light:=set_byte(column_light,y,band);
-                IF has_overlay THEN zbuffer[y]:=z; END IF;
-            END LOOP;
+                END LOOP;
+            END IF;
         ELSE
+            IF stroke.kind>=3 AND NOT (stroke.depth < ANY(zbuffer[stroke.y0:stroke.y1-1])) THEN CONTINUE; END IF;
             band:=CASE WHEN stroke.kind=2 THEN 0 ELSE least(bands,level_light+floor(stroke.depth/96)::int) END;
             sample:=coalesce(doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n),substring(empty_column FOR n));
             IF stroke.kind<3 THEN
