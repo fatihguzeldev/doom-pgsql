@@ -1,15 +1,15 @@
-CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
+CREATE OR REPLACE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8,cam doom.viewports)
 RETURNS SETOF doom.stroke LANGUAGE sql STABLE AS $$
     WITH visible_actors AS MATERIALIZED (
         SELECT a.sector,a.art,a.z,im.h,im.origin_y,loc.depth,
-            79.5+(loc.rightward-im.origin_x)*80/loc.depth AS left_x,
-            79.5+(loc.rightward-im.origin_x+im.w)*80/loc.depth AS right_x
+            cam.cx+(loc.rightward-im.origin_x)*cam.focal/loc.depth AS left_x,
+            cam.cx+(loc.rightward-im.origin_x+im.w)*cam.focal/loc.depth AS right_x
         FROM doom.actors a JOIN doom.art im ON im.id=a.art,
         LATERAL (SELECT (a.pos[0]-body.pos[0])*fx+(a.pos[1]-body.pos[1])*fy AS depth,
                         (a.pos[0]-body.pos[0])*fy-(a.pos[1]-body.pos[1])*fx AS rightward) loc
         WHERE a.game=g AND a.id<>-1 AND a.health>0 AND loc.depth>0.001 AND loc.depth<=far_z
-          AND 79.5+(loc.rightward-im.origin_x)*80/nullif(loc.depth,0)<=159
-          AND 79.5+(loc.rightward-im.origin_x+im.w)*80/nullif(loc.depth,0)>0
+          AND cam.cx+(loc.rightward-im.origin_x)*cam.focal/nullif(loc.depth,0)<=cam.w-1
+          AND cam.cx+(loc.rightward-im.origin_x+im.w)*cam.focal/nullif(loc.depth,0)>0
     ), clipped AS (
         SELECT a.*,coalesce(rc.light,s.light) AS light,
             greatest(coalesce(m.floor_z,s.floor_z),a.z+a.origin_y-a.h) AS bottom,
@@ -20,26 +20,29 @@ RETURNS SETOF doom.stroke LANGUAGE sql STABLE AS $$
         JOIN doom.mesh camera_room ON camera_room.level=p AND camera_room.sector=body.sector AND camera_room.component=am.component
         LEFT JOIN doom.movers m ON m.game=g AND m.sector=a.sector
     ), screen AS (
-        SELECT *,greatest(0,least(100,ceil(49.5+(body.z+41-top)*80/depth)))::int AS y0,
-            greatest(0,least(100,ceil(49.5+(body.z+41-bottom)*80/depth)))::int AS y1 FROM clipped
+        SELECT *,greatest(0,least(cam.h,ceil(cam.cy+(body.z+41-top)*cam.focal/depth)))::int AS y0,
+            greatest(0,least(cam.h,ceil(cam.cy+(body.z+41-bottom)*cam.focal/depth)))::int AS y1 FROM clipped
     )
-    SELECT x,y0,y1,4,art,(x-left_x)*depth/80,z+origin_y-body.z-41+(y0-49.5)*depth/80,depth/80,depth,light
-    FROM screen,LATERAL generate_series(greatest(0,ceil(left_x))::int,least(159,ceil(right_x)-1)::int)x
+    SELECT x,y0,y1,4,art,(x-left_x)*depth/cam.focal,z+origin_y-body.z-41+(y0-cam.cy)*depth/cam.focal,depth/cam.focal,depth,light
+    FROM screen,LATERAL generate_series(greatest(0,ceil(left_x))::int,least(cam.w-1,ceil(right_x)-1)::int)x
     WHERE y0<y1;
 $$;
 
-CREATE FUNCTION doom.raster(gid bigint,generation bigint,slot bigint,background_only boolean)
+CREATE OR REPLACE FUNCTION doom.raster(gid bigint,generation bigint,slot bigint,background_only boolean,cam doom.viewports)
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea,scene_depth float8[])
 LANGUAGE plpgsql STABLE STRICT SET jit=off SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     p bigint;
     body doom.actors;
+    -- The compiled wall strips, plane tables and stationary cache use the 160x100 pixel grid.
+    native boolean:=cam.w=160;
     fx float8;
     fy float8;
 
     eye float8;
     flat_colors bytea[];
-    row_scale float8[];
+    row_scale float8[]:=cam.row_scale;
+    shade_runs bytea[]:=cam.shade_runs;
     stroke doom.stroke;
     strokes doom.stroke[];
     world doom.stroke[];
@@ -70,8 +73,8 @@ DECLARE
     tex doom.tile;
     bands int;
     band int;
-    empty_column bytea:=decode(repeat('00',100),'hex');
-    colors bytea[]:=array_fill(empty_column,ARRAY[160],ARRAY[0]);
+    empty_column bytea:=decode(repeat('00',cam.h),'hex');
+    colors bytea[]:=array_fill(empty_column,ARRAY[cam.w],ARRAY[0]);
     lights bytea[]:=colors;
     column_data bytea;
     column_light bytea;
@@ -106,56 +109,54 @@ DECLARE
     has_overlay boolean;
     n int;
     idx int;
-    shade_run bytea[];
 BEGIN
     SELECT g.epoch,g.tic,g.level INTO STRICT epoch,tic,p FROM doom.games g WHERE g.id=gid;
     SELECT * INTO STRICT body FROM doom.actors WHERE game=gid AND id=-1;
     IF epoch<>generation OR slot<0 THEN RAISE EXCEPTION 'invalid frame generation or slot' USING ERRCODE='22023'; END IF;
-    SELECT screen.row_scale,screen.shade_runs INTO row_scale,shade_run FROM doom.screen;
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
     SELECT least(32,length(lighting)/256)-1,revision INTO bands,rev FROM doom.levels WHERE id=p;
-    SELECT w.cuts,w.quads INTO cuts,quad_offsets FROM doom.wall_scales w;
+    IF native THEN SELECT w.cuts,w.quads INTO cuts,quad_offsets FROM doom.wall_scales w; END IF;
     camera_x:=body.pos[0]; camera_y:=-body.pos[1];
-    IF NOT background_only THEN
+    IF native AND NOT background_only THEN
         SELECT c.background,c.illumination,c.depths,c.far_z INTO base_color,base_light,base_depth,horizon
         FROM doom.view_cache c WHERE c.game=gid AND c.revision=rev AND c.sector=body.sector AND c.x=camera_x
             AND c.y=body.pos[1] AND c.yaw=body.yaw AND c.z=body.z AND c.openings=doom.opening_key(gid);
     END IF;
     IF base_color IS NULL THEN
-        SELECT v.strokes,v.runs INTO world,runs FROM doom.project_world(p,gid,body,fx,fy)v;
+        SELECT v.strokes,v.runs INTO world,runs FROM doom.project_world(p,gid,body,fx,fy,cam)v;
         IF runs IS NOT NULL AND world IS NULL AND NOT background_only THEN
             SELECT sum((projection).hi-(projection).lo+1),min(((projection).wall).mid_id),
                 min(((projection).wall).mid_id)=max(((projection).wall).mid_id),
                 max(1/least((projection).inv0+(projection).lo*(projection).inv_step,
                             (projection).inv0+(projection).hi*(projection).inv_step))
             INTO run_columns,solid_art,full_wall,horizon FROM unnest(runs);
-            full_wall:=full_wall AND run_columns=160;
+            full_wall:=full_wall AND run_columns=cam.w;
         END IF;
         IF runs IS NOT NULL AND NOT full_wall THEN
-            world:=world||ARRAY(SELECT s FROM doom.wall_rays(runs)s);
+            world:=world||ARRAY(SELECT s FROM doom.wall_rays(runs,cam.w,cam.h)s);
             runs:=NULL;
         END IF;
         IF NOT full_wall THEN
-            SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
+            SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=cam.w*cam.h THEN max(
                 CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
             ) ELSE 'Infinity'::float8 END, bool_or(kind>=3),sum(y1-y0) FILTER(WHERE kind=0),
-            count(*)=160 AND bool_and(kind=1 AND y0=0 AND y1=100) AND count(art)=160 AND min(art)=max(art),min(art)
+            count(*)=cam.w AND bool_and(kind=1 AND y0=0 AND y1=cam.h) AND count(art)=cam.w AND min(art)=max(art),min(art)
             INTO horizon,has_masks,plane_area,full_wall,solid_art FROM unnest(world);
         END IF;
     END IF;
     IF NOT background_only THEN
-        SELECT array_agg(s) INTO sprites FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)s;
+        SELECT array_agg(s) INTO sprites FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon,cam)s;
     END IF;
     IF runs IS NOT NULL AND sprites IS NOT NULL THEN
-        world:=ARRAY(SELECT s FROM doom.wall_rays(runs)s);
+        world:=ARRAY(SELECT s FROM doom.wall_rays(runs,cam.w,cam.h)s);
         runs:=NULL;
     END IF;
     full_wall:=full_wall AND sprites IS NULL AND NOT background_only;
     -- Small exposed plane fragments cost less to sample than a screen transpose.
-    dense_flats:=plane_area>=10000;
+    dense_flats:=native AND plane_area>=10000;
     IF dense_flats THEN
         flat_colors:=doom.flat_background(world,camera_x,camera_y,fx,fy,eye,row_scale);
-        colors[0:159]:=flat_colors;
+        colors[0:cam.w-1]:=flat_colors;
     END IF;
     IF has_masks OR sprites IS NOT NULL THEN
         SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0) INTO strokes
@@ -166,49 +167,49 @@ BEGIN
         -- Opaque portal strokes never overlap.
         strokes:=world;
     END IF;
-    width:=160; height:=100; frame_slot:=slot;
+    width:=cam.w; height:=cam.h; frame_slot:=slot;
     IF base_color IS NOT NULL THEN
         IF strokes IS NULL THEN pixels:=base_color; shades:=base_light; RETURN NEXT; RETURN; END IF;
-        FOR x IN 0..159 LOOP
-            colors[x]:=substring(base_color FROM x*100+1 FOR 100);
-            lights[x]:=substring(base_light FROM x*100+1 FOR 100);
+        FOR x IN 0..cam.w-1 LOOP
+            colors[x]:=substring(base_color FROM x*cam.h+1 FOR cam.h);
+            lights[x]:=substring(base_light FROM x*cam.h+1 FOR cam.h);
         END LOOP;
     ELSIF background_only THEN
-        scene_depth:=array_fill('Infinity'::float8,ARRAY[16000]);
+        scene_depth:=array_fill('Infinity'::float8,ARRAY[cam.w*cam.h]);
     END IF;
     -- Depth and light are constant across each scanline of a plane.
     SELECT array_agg(key ORDER BY key),array_agg(coalesce(t.lut,doom.make_plane_lut(abs(eye-v),s.light,bands,row_scale)) ORDER BY key)
     INTO plane_keys,planes
     FROM (SELECT DISTINCT v,light,(v::int*256+light) AS key FROM unnest(world) WHERE kind=0) s
-    LEFT JOIN doom.plane_tables t ON t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
+    LEFT JOIN doom.plane_tables t ON native AND t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
     IF full_wall THEN
         SELECT a.w,a.h,substring(a.pixels FROM 1),a.column_ids INTO tex.w,tex.h,tex.pixels,tex.column_ids
         FROM doom.art a WHERE a.id=solid_art;
         WITH columns AS MATERIALIZED (
             SELECT q.x,coalesce(tex.column_ids[1+c.col],c.col) AS col,q.v,q.dv,
-                round(q.v+49.5*q.dv) AS origin,width_bucket(q.dv,cuts) AS bin,
-                1e-12*(1+abs(q.v)+100*abs(q.dv)) AS margin,
+                round(q.v+cam.cy*q.dv) AS origin,width_bucket(q.dv,cuts) AS bin,
+                1e-12*(1+abs(q.v)+cam.h*abs(q.dv)) AS margin,
                 least(bands,(255-q.light)/8+floor(q.depth/96)::int) AS band
-            FROM (SELECT * FROM unnest(world) UNION ALL SELECT * FROM doom.wall_rays(runs)) q,
+            FROM (SELECT * FROM unnest(world) UNION ALL SELECT * FROM doom.wall_rays(runs,cam.w,cam.h)) q,
                 LATERAL(SELECT ((floor(q.u)::int%tex.w)+tex.w)%tex.w AS col)c
         ), bounds AS (
-            SELECT min(col) AS lo,max(col) AS hi FROM columns WHERE dv<2.0/3
+            SELECT min(col) AS lo,max(col) AS hi FROM columns WHERE native AND dv<2.0/3
         ), atlas AS MATERIALIZED (
             SELECT lo,substring(a.quads FROM 1+16*tex.h*lo FOR 16*tex.h*(1+hi-lo)) AS data
             FROM bounds,doom.art a WHERE a.id=solid_art
         ), requests AS (
-            SELECT x,col,origin,v,dv,CASE WHEN atlas.data IS NOT NULL AND dv<2.0/3 AND v=origin-49.5*dv
+            SELECT x,col,origin,v,dv,CASE WHEN atlas.data IS NOT NULL AND dv<2.0/3 AND v=origin-cam.cy*dv
                 AND dv>cuts[bin]+margin AND dv<cuts[bin+1]-margin THEN bin END AS bin FROM columns,atlas
         ), groups AS (
             SELECT col,origin,bin,min(v) AS v,min(dv) AS dv,array_agg(x) AS xs FROM requests
             GROUP BY col,origin,bin,CASE WHEN bin IS NULL THEN v END,CASE WHEN bin IS NULL THEN dv END
         ), sampled AS MATERIALIZED (
-            SELECT xs,CASE WHEN bin IS NULL THEN doom.column_samples(tex.pixels,tex.w,tex.h,col,v,dv,100)
+            SELECT xs,CASE WHEN bin IS NULL THEN doom.column_samples(tex.pixels,tex.w,tex.h,col,v,dv,cam.h)
                 ELSE doom.wall_strip(atlas.data,16*tex.h*(col-atlas.lo),16*((origin::bigint & (tex.h-1))::int),
                     16*tex.h-1,quad_offsets,1+(bin-1)*25) END AS strip FROM groups,atlas
         )
         SELECT (SELECT string_agg(strip,''::bytea ORDER BY x) FROM sampled,unnest(xs)x),
-            (SELECT string_agg(shade_run[columns.band+1],''::bytea ORDER BY x) FROM columns)
+            (SELECT string_agg(shade_runs[columns.band+1],''::bytea ORDER BY x) FROM columns)
         INTO pixels,shades;
         RETURN NEXT; RETURN;
     ELSE
@@ -219,7 +220,7 @@ BEGIN
         FROM (SELECT art,bool_or(s.kind>=3) AS masked,bool_or(s.kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch,
             min(col) FILTER(WHERE ruler) AS lo,max(col) FILTER(WHERE ruler) AS hi
             FROM unnest(strokes)s,
-                LATERAL(SELECT floor(s.u)::int AS col,s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
+                LATERAL(SELECT floor(s.u)::int AS col,native AND s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
             WHERE s.kind>0 OR NOT dense_flats GROUP BY art) used
         JOIN doom.art a ON a.id=used.art
         CROSS JOIN LATERAL (SELECT CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
@@ -234,16 +235,16 @@ BEGIN
         IF stroke.x<>this_x THEN
             IF this_x>=0 THEN
                 colors[this_x]:=column_data; lights[this_x]:=column_light;
-                IF background_only THEN scene_depth[1+100*this_x:100*(this_x+1)]:=zbuffer; END IF;
+                IF background_only THEN scene_depth[1+cam.h*this_x:cam.h*(this_x+1)]:=zbuffer; END IF;
             END IF;
             this_x:=stroke.x; column_data:=colors[this_x]; column_light:=lights[this_x];
             has_overlay:=background_only OR coalesce(this_x=ANY(overlay_columns),false);
             IF NOT dense_flats THEN
-                sx:=fx+fy*(this_x-79.5)/80; sy:=fy-fx*(this_x-79.5)/80;
+                sx:=fx+fy*(this_x-cam.cx)/cam.focal; sy:=fy-fx*(this_x-cam.cx)/cam.focal;
             END IF;
             IF has_overlay THEN
-                zbuffer:=array_fill('Infinity'::float8,ARRAY[100],ARRAY[0]);
-                IF base_depth IS NOT NULL THEN zbuffer[0:99]:=base_depth[100*this_x+1:100*(this_x+1)]; END IF;
+                zbuffer:=array_fill('Infinity'::float8,ARRAY[cam.h],ARRAY[0]);
+                IF base_depth IS NOT NULL THEN zbuffer[0:cam.h-1]:=base_depth[cam.h*this_x+1:cam.h*(this_x+1)]; END IF;
             END IF;
         END IF;
 
@@ -284,7 +285,7 @@ BEGIN
                     IF sample IS NULL THEN sample:=doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n); END IF;
                     IF stroke.depth < ALL(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]) THEN
                         column_data:=overlay(column_data PLACING substring(sample FROM low_i+1 FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);
-                        column_light:=overlay(column_light PLACING substring(shade_run[band+1] FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);
+                        column_light:=overlay(column_light PLACING substring(shade_runs[band+1] FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);
                         zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]:=array_fill(stroke.depth,ARRAY[high_i-low_i]);
                     ELSE
                         FOR i IN low_i..high_i-1 LOOP
@@ -299,18 +300,18 @@ BEGIN
                 CONTINUE;
             END IF;
             IF stroke.kind=1 THEN
-                anchor:=round(stroke.v-(stroke.y0-49.5)*stroke.dv);
+                anchor:=round(stroke.v-(stroke.y0-cam.cy)*stroke.dv);
                 guard:=1e-12*(1+abs(stroke.v)+n*abs(stroke.dv));
                 IF prior_art=stroke.art AND prior_column=source_column AND prior_count=n
                     AND ((prior_v=stroke.v AND prior_step=stroke.dv) OR
-                        (prior_top=stroke.y0 AND prior_anchor=anchor AND stroke.v=anchor+(stroke.y0-49.5)*stroke.dv
+                        (prior_top=stroke.y0 AND prior_anchor=anchor AND stroke.v=anchor+(stroke.y0-cam.cy)*stroke.dv
                         AND stroke.dv>prior_low+guard AND stroke.dv<prior_high-guard)) THEN
                     sample:=prior_sample;
                 ELSE
                     prior_art:=stroke.art; prior_column:=source_column; prior_top:=stroke.y0;
                     prior_anchor:=anchor; prior_v:=stroke.v; prior_step:=stroke.dv; prior_count:=n;
                     prior_low:=NULL; prior_high:=NULL;
-                    IF stroke.dv<2 AND stroke.v=anchor+(stroke.y0-49.5)*stroke.dv THEN
+                    IF native AND stroke.dv<2 AND stroke.v=anchor+(stroke.y0-cam.cy)*stroke.dv THEN
                         bucket:=width_bucket(stroke.dv,cuts);
                         IF stroke.dv>cuts[bucket]+guard AND stroke.dv<cuts[bucket+1]-guard THEN
                             prior_low:=cuts[bucket]; prior_high:=cuts[bucket+1];
@@ -332,7 +333,7 @@ BEGIN
             END IF;
             IF stroke.kind<3 THEN
                 column_data:=overlay(column_data PLACING sample FROM stroke.y0+1 FOR n);
-                column_light:=overlay(column_light PLACING substring(shade_run[band+1] FOR n) FROM stroke.y0+1 FOR n);
+                column_light:=overlay(column_light PLACING substring(shade_runs[band+1] FOR n) FROM stroke.y0+1 FOR n);
                 IF has_overlay THEN zbuffer[stroke.y0:stroke.y1-1]:=array_fill(stroke.depth,ARRAY[n]); END IF;
             ELSE
                 opacity:=doom.column_samples(tex.mask,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n);
@@ -340,7 +341,7 @@ BEGIN
                     AND (stroke.kind<>3 OR (stroke.v>=0 AND stroke.v+(n-1)*stroke.dv<tex.h))
                     AND stroke.depth < ALL(zbuffer[stroke.y0:stroke.y1-1]) THEN
                     column_data:=overlay(column_data PLACING sample FROM stroke.y0+1 FOR n);
-                    column_light:=overlay(column_light PLACING substring(shade_run[band+1] FOR n) FROM stroke.y0+1 FOR n);
+                    column_light:=overlay(column_light PLACING substring(shade_runs[band+1] FOR n) FROM stroke.y0+1 FOR n);
                     zbuffer[stroke.y0:stroke.y1-1]:=array_fill(stroke.depth,ARRAY[n]);
                     CONTINUE;
                 END IF;
@@ -357,7 +358,7 @@ BEGIN
     END LOOP;
     IF this_x>=0 THEN
         colors[this_x]:=column_data; lights[this_x]:=column_light;
-        IF background_only THEN scene_depth[1+100*this_x:100*(this_x+1)]:=zbuffer; END IF;
+        IF background_only THEN scene_depth[1+cam.h*this_x:cam.h*(this_x+1)]:=zbuffer; END IF;
     END IF;
     SELECT string_agg(c,''::bytea ORDER BY i),string_agg(l,''::bytea ORDER BY i) INTO pixels,shades
     FROM unnest(colors,lights) WITH ORDINALITY b(c,l,i);
@@ -365,7 +366,17 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
+CREATE OR REPLACE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
+RETURNS SETOF doom.stroke LANGUAGE sql STABLE  AS $$
+    SELECT f.* FROM doom.viewports cam CROSS JOIN LATERAL doom.sprite_strokes(p,g,body,fx,fy,far_z,cam) f WHERE cam.w=160;
+$$;
+
+CREATE OR REPLACE FUNCTION doom.raster(gid bigint,generation bigint,slot bigint,background_only boolean)
+RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea,scene_depth float8[]) LANGUAGE sql STABLE STRICT AS $$
+    SELECT f.* FROM doom.viewports cam CROSS JOIN LATERAL doom.raster(gid,generation,slot,background_only,cam) f WHERE cam.w=160;
+$$;
+
+CREATE OR REPLACE FUNCTION doom.frame(gid bigint,generation bigint,slot bigint DEFAULT 0)
 RETURNS TABLE(epoch bigint,tic bigint,frame_slot bigint,width int,height int,pixels bytea,shades bytea)
 LANGUAGE sql STABLE AS $$
     SELECT r.epoch,r.tic,r.frame_slot,r.width,r.height,r.pixels,r.shades FROM doom.raster(gid,generation,slot,false)r;

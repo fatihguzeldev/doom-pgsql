@@ -8,6 +8,7 @@ DECLARE
     other_key text;
     saved doom.actors;
     pic bytea;
+    small bytea;
     lighting bytea;
     key text;
     packet record;
@@ -49,6 +50,12 @@ BEGIN
     ASSERT doom.cached_level(sha256('fixture'::bytea),'FIXTURE') IS NULL;
     SELECT game_id INTO STRICT g FROM doom.new_game(p);
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,1);
+    SELECT * INTO packet FROM doom.poll_frame_low(g,1,1,key);
+    ASSERT packet.width=64 AND packet.height=40 AND length(packet.pixels)=2560 AND length(packet.shades)=2560;
+    small:=packet.pixels;
+    ASSERT get_byte(small,32*40)=5 AND get_byte(small,32*40+39)=4,'low-resolution ceiling and floor';
+    ASSERT (SELECT pixels IS NULL FROM doom.poll_frame_low(g,1,2,packet.token));
+    ASSERT (SELECT pixels=pic FROM doom.poll_frame(g,1,2,packet.token));
     SELECT game_id INTO other_game FROM doom.new_game(p);
     SELECT token INTO other_key FROM doom.poll_frame(other_game,1,1);
     UPDATE doom.actors SET game=other_game,id=77 WHERE game=g AND id=1;
@@ -74,6 +81,7 @@ BEGIN
     ASSERT packet.tiles=ARRAY[1] AND packet.pixels=substring(pic FROM 801 FOR 800);
     PERFORM doom.anchor_view(g);
     ASSERT (SELECT pixels=pic FROM doom.frame(g,1,1)),'cached geometry changed the scene';
+    ASSERT (SELECT pixels=small FROM doom.poll_frame_low(g,1,1)),'low-resolution frames must not reuse the native depth buffer';
     UPDATE doom.actors SET pos=point(100,13) WHERE game=g AND id=1;
     SELECT pixels INTO reference FROM doom.frame(g,1,1);
     DELETE FROM doom.view_cache WHERE game=g;
@@ -89,6 +97,7 @@ BEGIN
     FROM generate_series(0,99)y;
     UPDATE doom.sectors SET ceiling_z=52,ceiling_tex=CASE WHEN id=1 THEN 'F_SKY1' ELSE 'C' END WHERE level=p;
     ASSERT (SELECT get_byte(pixels,8038)=38 FROM doom.frame(g,1,2)),'clipped sky must retain its screen row';
+    ASSERT (SELECT get_byte(pixels,32*40+15)=38 FROM doom.poll_frame_low(g,1,2)),'low-resolution sky texture sampling';
     UPDATE doom.sectors SET ceiling_z=80,ceiling_tex='C' WHERE level=p;
     UPDATE doom.sectors SET ceiling_z=0 WHERE level=p AND id=1;
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,3,key);
