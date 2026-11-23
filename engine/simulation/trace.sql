@@ -6,9 +6,19 @@ DECLARE
     direction int := start_sector;
 BEGIN
     FOR hit IN
-        WITH boundaries AS MATERIALIZED (
-            SELECT DISTINCT ON (w.id) w.* FROM doom.cells(origin,origin+delta)c
+        WITH cells AS (
+            -- Short use and sight rays use their bounding rectangle.
+            SELECT x,y FROM generate_series(ceil(least(origin[0],origin[0]+delta[0])/128)::int-1,
+                floor(greatest(origin[0],origin[0]+delta[0])/128)::int)x,
+                generate_series(ceil(least(origin[1],origin[1]+delta[1])/128)::int-1,
+                floor(greatest(origin[1],origin[1]+delta[1])/128)::int)y
+            WHERE greatest(abs(delta[0]),abs(delta[1]))<=128
+            UNION ALL SELECT c.x,c.y FROM doom.cells(origin,origin+delta)c
+            WHERE greatest(abs(delta[0]),abs(delta[1]))>128
+        ), boundaries AS MATERIALIZED (
+            SELECT DISTINCT ON (w.id) w.* FROM cells c
             JOIN doom.blockmap b ON b.level=p AND b.x=c.x AND b.y=c.y CROSS JOIN LATERAL unnest(b.walls)w
+            WHERE box(w.segment[0],w.segment[1]) && box(origin,origin+delta)
             ORDER BY w.id
         ), contacts AS (
             SELECT w.id,w.front AS r,w.back AS s,
@@ -16,22 +26,21 @@ BEGIN
             FROM boundaries w,LATERAL(SELECT w.segment[1]-w.segment[0] AS edge,w.segment[0]-origin AS v) ab,
             LATERAL (SELECT nullif(delta[0]*edge[1]-delta[1]*edge[0],0) AS den) d
         )
-        SELECT c.*, greatest(coalesce(rm.floor_z,rs.floor_z),coalesce(sm.floor_z,ss.floor_z)) AS bottom,
-            least(coalesce(rm.ceiling_z,rs.ceiling_z),coalesce(sm.ceiling_z,ss.ceiling_z)) AS top
-        FROM contacts c JOIN doom.sectors rs ON rs.level=p AND rs.id=c.r
-        LEFT JOIN doom.sectors ss ON ss.level=p AND ss.id=c.s
-        LEFT JOIN doom.movers rm ON rm.game=g AND rm.sector=c.r
-        LEFT JOIN doom.movers sm ON sm.game=g AND sm.sector=c.s
-        WHERE c.k BETWEEN 0 AND 1 AND c.u BETWEEN 0 AND 1
+        SELECT c.* FROM contacts c WHERE c.k BETWEEN 0 AND 1 AND c.u BETWEEN 0 AND 1
         ORDER BY c.k,(c.s IS NULL) DESC,c.id
     LOOP
         CONTINUE WHEN direction<>hit.r AND direction IS DISTINCT FROM hit.s;
-        sector := direction; line := hit.id; t := hit.k;
-        other := CASE WHEN direction=hit.r THEN hit.s ELSE hit.r END;
-        blocked := other IS NULL OR eye<hit.bottom OR eye>=hit.top;
+        sector:=direction; line:=hit.id; t:=hit.k;
+        other:=CASE WHEN direction=hit.r THEN hit.s ELSE hit.r END;
+        blocked:=other IS NULL;
+        IF NOT blocked THEN
+            SELECT eye<max(coalesce(m.floor_z,s.floor_z)) OR eye>=min(coalesce(m.ceiling_z,s.ceiling_z))
+            INTO blocked FROM doom.sectors s LEFT JOIN doom.movers m ON m.game=g AND m.sector=s.id
+            WHERE s.level=p AND s.id IN (direction,other);
+        END IF;
         RETURN NEXT;
         EXIT WHEN blocked;
-        direction := other;
+        direction:=other;
     END LOOP;
 END;
 $$;
