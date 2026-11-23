@@ -1,5 +1,3 @@
-"""Render all nine shareware maps and replay the Hangar exit route."""
-
 import argparse
 import hashlib
 import json
@@ -50,6 +48,6 @@ def verify(wad_path):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Render all nine shareware maps and replay the Hangar exit route.")
     parser.add_argument("wad", type=Path)
     verify(parser.parse_args().wad)

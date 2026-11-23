@@ -1,4 +1,4 @@
--- Check the portal sweep against the nearest ray hit in each column.
+-- the nearest ray hit in each column is the reference for the portal sweep.
 DO $$
 DECLARE
     edges doom.edge[];

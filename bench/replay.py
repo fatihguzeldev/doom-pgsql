@@ -1,5 +1,3 @@
-"""Measure distinct SQL frames and acknowledged game tics per second."""
-
 import argparse
 import hashlib
 import json
@@ -157,7 +155,7 @@ def measure(dsn, game, seconds, rtt, container=None, commands=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Measure distinct SQL frames and acknowledged game tics per second.")
     parser.add_argument("--dsn", default="")
     parser.add_argument("--container", help="read CPU counters for this local PostgreSQL container")
     which = parser.add_mutually_exclusive_group(required=True)

@@ -1,5 +1,3 @@
-"""Retry a partially committed input batch after terminating its writer."""
-
 import argparse
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +46,6 @@ def verify(level):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Retry a partially committed input batch after terminating its writer.")
     parser.add_argument("level", type=int)
     verify(parser.parse_args().level)

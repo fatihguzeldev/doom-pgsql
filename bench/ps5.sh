@@ -1,7 +1,6 @@
 #!/bin/sh
-# Usage: PYTHON=path/to/python bench/ps5.sh doom1.wad [seconds] [E1M3|E1M1]
 set -eu
-wad=${1:?path to a shareware WAD required}
+wad=${1:?usage: bench/ps5.sh doom1.wad [seconds] [E1M3|E1M1]}
 duration=${2:-60}
 map=${3:-E1M3}
 set --

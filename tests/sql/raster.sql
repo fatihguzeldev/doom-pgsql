@@ -58,7 +58,7 @@ DECLARE
     step float8;
     expected int;
 BEGIN
-    -- All three columns have the same texels. Only columns 0 and 2 share a mask.
+    -- all three columns have the same texels. only columns 0 and 2 share a mask.
     ASSERT doom.wall_column_ids(decode('111211121112','hex'),decode('ffff00ffffff','hex'),3,2)=ARRAY[0,1,0];
     ASSERT doom.wall_column_ids(decode('01020304','hex'),NULL,2,2) IS NULL;
     posts:=doom.sprite_posts(decode('00000000ff00ffff0000ffff','hex'),3,4);
