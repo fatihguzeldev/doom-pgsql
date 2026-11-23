@@ -5,6 +5,9 @@ repo=$(cd "$(dirname "$0")" && pwd)
 compose=(docker compose -f "$repo/compose.yaml")
 args=()
 use_db=true
+rife=false
+export DOOM_PLAY_VARIANT=
+build=()
 sound=true
 while (( $# )); do
     case "$1" in
@@ -32,6 +35,12 @@ while (( $# )); do
             sound=false
             args+=("$1")
             ;;
+        --rife)
+            rife=true
+            export DOOM_PLAY_VARIANT=-rife
+            build=(--build)
+            args+=("$1")
+            ;;
         --dsn|--dsn=*)
             use_db=false
             args+=("$1")
@@ -43,7 +52,7 @@ done
 
 if [[ $use_db == true ]]; then
     "${compose[@]}" up -d --wait db
-    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -U postgres -d doom <<'SQL'
+    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom <<'SQL'
 \o /dev/null
 SELECT pg_advisory_lock(hashtext('doom.install'));
 SELECT to_regnamespace('doom') IS NULL AS install \gset
@@ -65,6 +74,14 @@ SELECT prosqlbody IS NULL AS upgrade_palette
 FROM pg_proc WHERE oid='doom.frame_palette(bigint)'::regprocedure \gset
 \if :upgrade_palette
 \i /app/engine/render/palette.sql
+\endif
+\if :rife
+SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NULL AS install_low \gset
+\if :install_low
+BEGIN;
+\i /app/engine/render/lowres.sql
+COMMIT;
+\endif
 \endif
 \endif
 SQL
@@ -88,8 +105,8 @@ if [[ $sound == true && -t 0 && -t 1 ]]; then
         ) < "$audio/events" >/dev/null 2>&1 &
         listener=$!
         trap 'kill "$follower" "$listener" 2>/dev/null || true; wait || true; rm -rf "$audio"' EXIT
-        "${compose[@]}" run --rm -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
+        "${compose[@]}" run --rm "${build[@]}" -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
         exit
     done
 fi
-exec "${compose[@]}" run --rm play "${args[@]}"
+exec "${compose[@]}" run --rm "${build[@]}" play "${args[@]}"

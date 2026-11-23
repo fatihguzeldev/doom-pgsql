@@ -17,7 +17,10 @@ services:
       retries: 3
 
   play:
-    build: .
+    image: ${COMPOSE_PROJECT_NAME}-play${DOOM_PLAY_VARIANT:-}
+    build:
+      context: .
+      target: client${DOOM_PLAY_VARIANT:-}
     volumes:
       - ./examples/terminal:/app/examples/terminal:ro
       - type: bind
