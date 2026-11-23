@@ -1,4 +1,4 @@
-"""python -m examples.terminal.play --wad doom1.wad --map E1M3"""
+"""python -m examples.terminal.play"""
 
 import argparse
 import asyncio
@@ -141,10 +141,9 @@ async def play(args):
         return await psycopg.AsyncConnection.connect(args.dsn, autocommit=True, row_factory=dict_row)
 
     async with await connect() as setup:
-        if args.wad:
-            result = await setup.execute(
-                "SELECT doom.load_wad(%s,%s) AS id", (args.wad.read_bytes(), args.map)
-            )
+        if args.game is None:
+            wad = args.wad or Path(__file__).resolve().parents[2] / "assets" / "doom1.wad"
+            result = await setup.execute("SELECT doom.load_wad(%s,%s) AS id", (wad.read_bytes(), args.map))
             level = (await result.fetchone())["id"]
             result = await setup.execute("SELECT * FROM doom.new_game(%s,%s)", (level, args.skill))
         else:
@@ -287,11 +286,15 @@ async def play(args):
 def main():
     parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
     parser.add_argument("--dsn", default="", help="libpq connection string (or set PG* environment variables)")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--wad", type=Path)
-    group.add_argument("--game", type=int)
-    parser.add_argument("--map", default="E1M1")
-    parser.add_argument("--skill", type=int, choices=range(1, 6), default=3)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--wad", type=Path, help="start a new game with this WAD (default: bundled assets/doom1.wad)"
+    )
+    group.add_argument("--game", type=int, help="join an existing game by ID")
+    parser.add_argument("--map", default="E1M1", help="map for a new game (default: E1M1)")
+    parser.add_argument(
+        "--skill", type=int, choices=range(1, 6), default=3, help="difficulty for a new game (default: 3)"
+    )
     parser.add_argument("--delta", action="store_true", help="receive changed eight-column strips")
     parser.add_argument(
         "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
