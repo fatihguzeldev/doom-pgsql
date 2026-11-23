@@ -125,6 +125,7 @@ DECLARE
     edges doom.edge[];
     rooms doom.room[];
     moving doom.movers;
+    changed doom.room_changes;
     sky_angles float8[];
     front doom.room;
     back doom.room;
@@ -142,6 +143,10 @@ BEGIN
     FOR moving IN SELECT * FROM doom.movers WHERE game=g LOOP
         front:=rooms[1+moving.sector]; front.z_floor:=moving.floor_z; front.z_ceil:=moving.ceiling_z;
         rooms[1+moving.sector]:=front;
+    END LOOP;
+    FOR changed IN SELECT * FROM doom.room_changes WHERE game=g LOOP
+        front:=rooms[1+changed.sector]; front.light:=coalesce(changed.light,front.light);
+        front.floor_id:=coalesce(changed.floor_id,front.floor_id); rooms[1+changed.sector]:=front;
     END LOOP;
     WHILE tail>0 LOOP
         win:=queue[tail]; tail:=tail-1;

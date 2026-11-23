@@ -2,7 +2,7 @@ CREATE TYPE doom.command AS (forward float8,strafe float8,turn float8,use_line b
 CREATE TABLE doom.games (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, level bigint NOT NULL REFERENCES doom.levels,
     epoch bigint NOT NULL DEFAULT 1, tic bigint NOT NULL DEFAULT 0, difficulty int NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
-    last_command doom.command, finished boolean NOT NULL DEFAULT false, ammo int NOT NULL DEFAULT 50,
+    last_command doom.command, finished boolean NOT NULL DEFAULT false, secret_exit boolean NOT NULL DEFAULT false, ammo int NOT NULL DEFAULT 50,
     armor int NOT NULL DEFAULT 0, keys int NOT NULL DEFAULT 0, next_shot bigint NOT NULL DEFAULT 0
 ) WITH (fillfactor=80);
 CREATE TABLE doom.actors (
@@ -22,6 +22,10 @@ CREATE TABLE doom.movers (
     floor_z int NOT NULL,ceiling_z int NOT NULL,plane text NOT NULL CHECK(plane IN ('floor','ceiling')),
     target int NOT NULL, home int, speed int NOT NULL CHECK(speed>0), resume_at bigint,wait_tics int NOT NULL,
     PRIMARY KEY(game,sector)
+);
+CREATE TABLE doom.room_changes (
+    game bigint REFERENCES doom.games ON DELETE CASCADE, sector int, light int CHECK(light BETWEEN 0 AND 255),
+    floor_id int REFERENCES doom.art, PRIMARY KEY(game,sector)
 );
 CREATE TABLE doom.used_lines(game bigint REFERENCES doom.games ON DELETE CASCADE,line int,PRIMARY KEY(game,line));
 

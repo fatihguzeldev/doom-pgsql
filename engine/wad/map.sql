@@ -13,11 +13,12 @@ BEGIN
            array_agg(substring(wad FROM d.pos+1 FOR d.size) ORDER BY d.ordinal)
       INTO names,parts FROM unnest(directory) d WHERE d.ordinal BETWEEN marker+1 AND marker+11;
     IF names[1:8] IS DISTINCT FROM ARRAY['THINGS','LINEDEFS','SIDEDEFS','VERTEXES','SEGS','SSECTORS','NODES','SECTORS']
-       OR NOT (names[9]='BLOCKMAP' OR (names[9]='REJECT' AND names[10]='BLOCKMAP'))
+       OR (names[9]='BLOCKMAP' OR (names[9]='REJECT' AND names[10]='BLOCKMAP')) IS DISTINCT FROM true
        OR 'BEHAVIOR'=ANY(names) THEN
         RAISE EXCEPTION 'missing or unsupported classic map %',map_name USING ERRCODE='22023';
     END IF;
     n := doom.record_count(parts[8],26);
+    IF n NOT BETWEEN 1 AND 65536 THEN RAISE EXCEPTION 'invalid sector count' USING ERRCODE='22023'; END IF;
     INSERT INTO doom.levels(name,palette,lighting,sector_count,reject)
     VALUES (map_name,substring(doom.lump_data(wad,catalog,'PLAYPAL') FOR 768),
         doom.lump_data(wad,catalog,'COLORMAP'),n,CASE WHEN names[9]='REJECT'

@@ -73,12 +73,13 @@ CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8
 RETURNS SETOF doom.stroke LANGUAGE plpgsql STABLE STRICT AS $$
 BEGIN
     RETURN QUERY WITH projected AS (
-        SELECT a.id,a.art,im.w,im.h,im.origin_x,im.origin_y,a.z,s.light,
+        SELECT a.id,a.art,im.w,im.h,im.origin_x,im.origin_y,a.z,coalesce(rc.light,s.light) AS light,
             greatest(coalesce(m.floor_z,s.floor_z),a.z+im.origin_y-im.h) AS bottom,
             least(coalesce(m.ceiling_z,s.ceiling_z),a.z+im.origin_y) AS top,
             (a.pos[0]-body.pos[0])*fx+(a.pos[1]-body.pos[1])*fy AS depth,
             (a.pos[0]-body.pos[0])*fy-(a.pos[1]-body.pos[1])*fx AS rightward
         FROM doom.actors a JOIN doom.art im ON im.id=a.art JOIN doom.sectors s ON s.level=p AND s.id=a.sector
+        LEFT JOIN doom.room_changes rc ON rc.game=g AND rc.sector=a.sector
         JOIN doom.mesh am ON am.level=p AND am.sector=a.sector
         JOIN doom.mesh camera_room ON camera_room.level=p AND camera_room.sector=body.sector AND camera_room.component=am.component
         LEFT JOIN doom.movers m ON m.game=g AND m.sector=a.sector

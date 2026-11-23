@@ -67,6 +67,9 @@ BEGIN
     UPDATE doom.lines SET a=point(24,80),b=point(24,-80),back=NULL,front=0 WHERE level=p AND id=1;
     ASSERT EXISTS(SELECT FROM doom.trace(p,g,point(8,0),point(32,0),0,41) WHERE line=1 AND t=0.5 AND blocked);
     ASSERT (SELECT get_byte(pixels,8000)=55 FROM doom.frame(g,1,5)),'wall edit did not reach the renderer';
+    UPDATE doom.lines SET special=11 WHERE level=p AND id=1;
+    PERFORM doom.tick(g,1,37,0,0,0,true,false);
+    ASSERT (SELECT finished FROM doom.game_status(g)) AND doom.tick(g,1,38,1,0,0,false,false)=37;
 END;
 $$;
 ROLLBACK;

@@ -8,12 +8,16 @@ DECLARE
     r record;
     goal int;
     required_key int;
+    step_sector int;
+    next_sector int;
+    visited int[];
+    floor_art int;
 BEGIN
     SELECT * INTO STRICT l FROM doom.lines WHERE level=g.level AND id=line_no;
     IF l.special=0 OR EXISTS (SELECT FROM doom.used_lines WHERE game=g.id AND line=line_no) THEN RETURN; END IF;
     IF l.special IN (11,51,52,124) THEN
         IF (l.special IN (11,51) AND mode='use') OR (l.special IN (52,124) AND mode='cross') THEN
-            UPDATE doom.games SET finished=true WHERE id=g.id;
+            UPDATE doom.games SET finished=true,secret_exit=l.special IN (51,124) WHERE id=g.id;
         END IF;
         RETURN;
     END IF;
@@ -25,12 +29,38 @@ BEGIN
         WHERE a.game=g.id AND a.id=-1;
         RETURN;
     END IF;
+    IF l.special=35 AND mode='cross' THEN
+        INSERT INTO doom.room_changes(game,sector,light) SELECT g.id,s.id,35 FROM doom.sectors s WHERE s.level=g.level AND s.tag=l.tag
+        ON CONFLICT(game,sector) DO UPDATE SET light=excluded.light;
+        INSERT INTO doom.used_lines VALUES(g.id,line_no);
+        RETURN;
+    END IF;
+    IF (l.special=8 AND mode='cross') OR (l.special=7 AND mode='use') THEN
+        FOR r IN SELECT * FROM doom.sectors WHERE level=g.level AND tag=l.tag ORDER BY id LOOP
+            step_sector:=r.id; goal:=r.floor_z; visited:='{}';
+            WHILE step_sector IS NOT NULL LOOP
+                goal:=goal+8; visited:=array_append(visited,step_sector);
+                INSERT INTO doom.movers SELECT g.id,step_sector,s.floor_z,s.ceiling_z,'floor',goal,NULL,1,NULL,0
+                FROM doom.sectors s WHERE s.level=g.level AND s.id=step_sector ON CONFLICT DO NOTHING;
+                SELECT back.sector INTO next_sector FROM doom.lines line
+                JOIN doom.sides front ON front.level=g.level AND front.id=line.front
+                JOIN doom.sides back ON back.level=g.level AND back.id=line.back
+                JOIN doom.sectors s ON s.level=g.level AND s.id=back.sector
+                WHERE line.level=g.level AND front.sector=step_sector AND s.floor_tex=r.floor_tex
+                    AND NOT(s.id=ANY(visited)) AND NOT EXISTS(SELECT FROM doom.movers m WHERE m.game=g.id AND m.sector=s.id)
+                ORDER BY line.id LIMIT 1;
+                step_sector:=next_sector;
+            END LOOP;
+        END LOOP;
+        INSERT INTO doom.used_lines VALUES(g.id,line_no);
+        RETURN;
+    END IF;
     door := l.special IN (1,2,3,4,16,26,27,28,29,31,32,33,34,42,46,50,61,63,75,76,86,90,99,103,105,106,107,108,109,110,111,112,113,114,115,116,117,118);
     lift := l.special IN (10,21,62,88,120,121,122,123);
-    IF NOT door AND NOT lift AND l.special NOT IN (5,18,19,23,24,30,36,38,45,55,56,58,69,70,71,82,83,91,92,93,98,101,102,119,128,129,130,131,132) THEN RETURN; END IF;
+    IF NOT door AND NOT lift AND l.special NOT IN (5,18,19,20,22,23,24,30,36,38,45,55,56,58,69,70,71,82,83,91,92,93,98,101,102,119,128,129,130,131,132) THEN RETURN; END IF;
     IF l.special IN (24,46) THEN
         IF mode<>'shoot' THEN RETURN; END IF;
-    ELSIF l.special IN (2,3,4,5,10,16,19,30,36,38,56,58,75,76,82,83,86,88,90,91,92,93,98,105,106,107,108,109,110,119,120,121,128,129,130) THEN
+    ELSIF l.special IN (2,3,4,5,10,16,19,22,30,36,38,56,58,75,76,82,83,86,88,90,91,92,93,98,105,106,107,108,109,110,119,120,121,128,129,130) THEN
         IF mode<>'cross' THEN RETURN; END IF;
     ELSIF mode<>'use' THEN RETURN;
     END IF;
@@ -51,6 +81,12 @@ BEGIN
         WHERE mesh.level=g.level AND mesh.sector=r.id AND e.dest<>r.id;
         IF door AND l.special IN (3,16,42,50,75,76,107,110,113,116) THEN goal:=r.f; END IF;
         IF goal IS NULL THEN CONTINUE; END IF;
+        IF l.special IN (20,22) THEN
+            SELECT m.floor_id INTO floor_art FROM doom.sides side JOIN doom.mesh m ON m.level=g.level AND m.sector=side.sector
+            WHERE side.level=g.level AND side.id=l.front;
+            INSERT INTO doom.room_changes(game,sector,floor_id) VALUES(g.id,r.id,floor_art)
+            ON CONFLICT(game,sector) DO UPDATE SET floor_id=excluded.floor_id;
+        END IF;
         INSERT INTO doom.movers VALUES(g.id,r.id,r.f,r.c,CASE WHEN door THEN 'ceiling' ELSE 'floor' END,
             goal,CASE WHEN lift THEN r.f WHEN door AND l.special IN (1,4,26,27,28,29,63,90,105,108,111,114,117) THEN r.f END,
             CASE WHEN l.special BETWEEN 105 AND 123 THEN 8 WHEN door THEN 2 ELSE 4 END,NULL,CASE WHEN door THEN 150 ELSE 105 END)
