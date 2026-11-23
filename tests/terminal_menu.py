@@ -78,6 +78,14 @@ def resize_game(tty, rows, cols):
 def run():
     with psycopg.connect(autocommit=True) as db:
         last_id = db.execute("SELECT COALESCE(max(id), 0) FROM doom.games").fetchone()[0]
+        with db.transaction(), client() as (tty, proc):
+            db.execute("LOCK TABLE doom.levels IN ACCESS EXCLUSIVE MODE")
+            tty.until(b"New game")
+            tty.send(b"\r")
+            tty.until(b"Loading E1M1")
+            tty.until(b"1s    Q quit")
+            tty.quit(proc)
+
         with client() as (tty, proc):
             tty.until(b"MAIN MENU")
             tty.until(b"New game")
@@ -86,6 +94,7 @@ def run():
             tty.send(b"\x1b[D\x1b[B\x1b[D")
             tty.until(b"Hey, not too rough")
             tty.send(b"\x1b[A\x1b[A\r")
+            tty.until(b"Loading E1M1")
             tty.until(b"AMMO 50")
             tty.send(b" ")
             tty.until(b"AMMO 49")
@@ -131,6 +140,7 @@ def run():
             saves = tty.until(f"#{game}   E1M1   Skill 2".encode())
             preceding = len(re.findall(rb"#\d+   ", saves)) - 1
             tty.send(b"\x1b[B" * preceding + b"\r")
+            tty.until(f"Loading game #{game}".encode())
             tty.until(b"AMMO 49")
 
             # Give this player inventory and activate the Hangar's normal exit switch.
@@ -145,6 +155,7 @@ def run():
             tty.until(b"LEVEL COMPLETE")
             tty.until(b"Next map")
             tty.send(b"\r")
+            tty.until(b"Loading E1M2")
             tty.until(b"HP 87%   ARM 25%   AMMO 49")
             advanced = db.execute(
                 """SELECT l.name, g.keys FROM doom.games g

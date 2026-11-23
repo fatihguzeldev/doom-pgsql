@@ -135,10 +135,17 @@ def next_map(current, maps, secret):
     return None
 
 
-async def play_session(session, display, keys, maps):
+async def loading_screen(display, target, started):
     while True:
+        now = monotonic()
+        display.loading(target, int(now - started), int(now * LOGO_HZ))
+        await asyncio.sleep(1 / LOGO_HZ)
+
+
+async def play_session(session, display, keys, maps, started):
+    while True:
+        now = monotonic()
         if session.frames.frame is not None and session.status:
-            now = monotonic()
             turn = sum(session.turns.values()) if session.predict_turn else 0
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
@@ -153,6 +160,8 @@ async def play_session(session, display, keys, maps):
                 phase=int(now * LOGO_HZ),
                 lit_keys=keys.lit_keys(now),
             )
+        else:
+            display.loading(session.state["map"], int(now - started), int(now * LOGO_HZ))
         try:
             key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35)
         except TimeoutError:
@@ -210,14 +219,19 @@ async def play(args, keys):
         while not keys.quit.is_set():
             if show_menu and not await new_game_menu(args, maps, display, keys):
                 return
-            state = await open_game(args, wad, level, previous_game)
+            started = monotonic()
+            target = args.map if args.game is None else f"game #{args.game}"
+            state = await first(
+                loading_screen(display, target, started),
+                open_game(args, wad, level, previous_game),
+            )
             args.map, args.skill = state["map"], state["difficulty"]
             if args.map not in maps:
                 maps = (*maps, args.map)
             keys.set_menu(False)
             session = Session(args, state, keys)
             action = await first(
-                play_session(session, display, keys, maps),
+                play_session(session, display, keys, maps, started),
                 session.capture(),
                 session.submit(),
                 session.receive(sound),

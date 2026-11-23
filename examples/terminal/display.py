@@ -277,6 +277,15 @@ class Display:
             sys.stdout.write("".join(output) + "\x1b[0m")
             sys.stdout.flush()
 
+    def loading(self, target, seconds, phase):
+        page = _Page()
+        logo = _logo(page)
+        y = page.height // 2
+        _draw_logo(page, logo, y - len(logo) - 2, phase)
+        page.centered(y, f"Loading {target}", GOLD)
+        page.centered(y + 2, f"{seconds}s    Q quit", VIOLET)
+        self._present(page)
+
     def _game_rows(self, frame, palette, status, turn, shot_age, cols, rows):
         if palette is not self._palette:
             self._palette = palette
