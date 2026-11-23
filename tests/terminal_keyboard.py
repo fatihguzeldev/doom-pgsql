@@ -1,0 +1,76 @@
+"""Keyboard byte-stream tests. Run with python -m unittest discover -s tests -p terminal_keyboard.py."""
+
+import asyncio
+import unittest
+
+from examples.terminal.keyboard import ESC_DELAY, Keyboard
+
+
+class KeyboardTest(unittest.IsolatedAsyncioTestCase):
+    async def test_release_and_aliases(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b[?11u\x1b[119u\x1b[A\x1b[97u\x1b[32u", 0)
+        self.assertEqual(keys.sample(1), (1, 1, 0, False, True))
+        keys.feed(b"\x1b[119;1:3u\x1b[97;1:3u\x1b[32;1:3u", 1.1)
+        self.assertEqual(keys.sample(5), (1, 0, 0, False, False))
+        keys.feed(b"\x1b[1;1:3A", 5.1)
+        self.assertEqual(keys.sample(6), (0, 0, 0, False, False))
+
+    async def test_taps_survive_input_backpressure(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b[106u\x1b[106;1:3u", 0)
+        for _ in range(2):
+            keys.feed(b"\x1b[101u\x1b[101;1:2u\x1b[101;1:3u\x1b[32u\x1b[32;1:3u", 0)
+        self.assertEqual(keys.sample(10), (0, 0, 0.09, True, True))
+        self.assertEqual(keys.sample(11), (0, 0, 0, True, True))
+        self.assertEqual(keys.sample(12), (0, 0, 0, False, False))
+        keys.feed(b"ee  ", 13)
+        self.assertEqual(keys.sample(14)[3:], (True, True))
+        self.assertEqual(keys.sample(15)[3:], (True, True))
+        self.assertEqual(keys.sample(16)[3:], (False, False))
+
+    async def test_arrow_release_during_protocol_negotiation(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b[A", 1)
+        self.assertEqual(keys.sample(1.01)[0], 1)
+        keys.feed(b"\x1b[?11u\x1b[1;1:3A", 1.02)
+        self.assertEqual(keys.sample(1.03)[0], 0)
+
+    async def test_plain_tty_repeat_auto_walk_and_focus(self):
+        keys = Keyboard()
+        keys.feed(b"w", 1)
+        self.assertEqual(keys.sample(2)[0], 1)
+        self.assertEqual(keys.sample(2)[0], 0)
+        keys.feed(b"w ", 3)
+        self.assertEqual(keys.sample(3.49), (1, 0, 0, False, True))
+        keys.feed(b"w ", 3.50)
+        self.assertEqual(keys.sample(3.62), (1, 0, 0, False, True))
+        self.assertEqual(keys.sample(3.65), (0, 0, 0, False, False))
+        keys.feed(b"w\x1b[B", 3.7)
+        self.assertEqual(keys.sample(3.71)[0], -1)
+        keys.feed(b"\x1b[O", 3.72)
+        keys.feed(b"r", 4)
+        self.assertEqual(keys.sample(20)[0], 1)
+        keys.feed(b"r", 21)
+        self.assertEqual(keys.sample(22)[0], 0)
+        keys.feed(b"r\x1b[119u\x1b[32u\x1b[O", 23)
+        self.assertEqual(keys.sample(24), (0, 0, 0, False, False))
+
+    async def test_fragmented_control_and_standalone_escape(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b", 0)
+        await asyncio.sleep(0)
+        keys.feed(b"[", 0)
+        keys.feed(b"1;1:", 0)
+        keys.feed(b"1C", 0)
+        self.assertEqual(keys.sample(1)[2], -0.09)
+        self.assertTrue(keys.menu_keys.empty())
+        keys.feed(b"\x1b", 1)
+        self.assertEqual(await asyncio.wait_for(keys.menu_keys.get(), ESC_DELAY + 1), "esc")
+        keys.set_menu(True)
+        keys.feed(b"\x1b[1;1:3C\x1bOA\r\x1b[27u", 2)
+        self.assertEqual([keys.menu_keys.get_nowait() for _ in range(3)], ["up", "enter", "esc"])
+        self.assertEqual(keys.sample(3), (0, 0, 0, False, False))
+        keys.feed(b"\x1b[99;5u", 4)
+        self.assertTrue(keys.quit.is_set())
+        self.assertEqual(keys.menu_keys.get_nowait(), "q")
