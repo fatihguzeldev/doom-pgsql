@@ -1,0 +1,13 @@
+services:
+  db:
+    # cpu cores: 0.0625 is 1/16 of a core. use 0.01 up to docker's cpu count, or 0 for no cap.
+    cpus: 0.0625
+    # memory cap: docker accepts 6m or more. for postgres, try 256m, 512m or 1g.
+    mem_limit: &ram 512m
+    # total ram plus swap. matching the memory cap disables swap.
+    memswap_limit: *ram
+
+  play:
+    environment:
+      # added delay per gameplay query, in ms. use 0 (off), 50 (benchmark), or any finite nonnegative value.
+      DOOM_RTT_MS: "0"

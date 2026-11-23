@@ -1,5 +1,8 @@
 services:
   db:
+    extends:
+      file: settings.yaml
+      service: db
     image: postgres:17
     environment:
       POSTGRES_DB: doom
@@ -15,6 +18,9 @@ services:
       retries: 60
 
   play:
+    extends:
+      file: settings.yaml
+      service: play
     build: .
     volumes:
       - ./examples/terminal:/app/examples/terminal:ro
