@@ -68,8 +68,8 @@ class Session:
                     while True:
                         if not batch:
                             batch.append(await self.pending.get())
-                        while not self.pending.empty():
-                            batch.append(self.pending.get_nowait())
+                            while not self.pending.empty():
+                                batch.append(self.pending.get_nowait())
                         # retry the same tic range if the commit outcome is unknown
                         await game_query(
                             db,
