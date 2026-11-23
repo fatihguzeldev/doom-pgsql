@@ -49,6 +49,13 @@ SELECT pg_advisory_lock(hashtext('doom.install'));
 SELECT to_regnamespace('doom') IS NULL AS install \gset
 \if :install
 \i /app/install.sql
+\else
+SELECT to_regprocedure('doom.prepare_wad(bytea,text)') IS NULL AS upgrade \gset
+\if :upgrade
+BEGIN;
+\i /app/engine/wad/prepared.sql
+COMMIT;
+\endif
 \endif
 SQL
 else

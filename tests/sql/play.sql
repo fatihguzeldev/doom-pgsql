@@ -36,6 +36,16 @@ BEGIN
         (p,6,point(160,-80),point(64,-80),3,NULL,1,0,0);
     INSERT INTO doom.spawns VALUES(p,0,point(0,0),0,1,7),(p,1,point(100,0),180,3004,7);
     PERFORM doom.compile_level(p); UPDATE doom.levels SET ready=true WHERE id=p;
+    UPDATE doom.levels SET wad_hash=sha256('fixture'::bytea) WHERE id=p;
+    ASSERT doom.prepare_wad('fixture'::bytea,'fixture')=p;
+    ASSERT doom.cached_level(sha256('other'::bytea),'FIXTURE') IS NULL;
+    ASSERT doom.cached_level(sha256('fixture'::bytea),'OTHER') IS NULL;
+    UPDATE doom.thing_types SET sprite='FIXTURE' WHERE code=3004;
+    ASSERT doom.cached_level(sha256('fixture'::bytea),'FIXTURE') IS NULL;
+    UPDATE doom.thing_types SET sprite='POSSA1' WHERE code=3004;
+    UPDATE doom.levels SET wad_hash=sha256('fixture'::bytea) WHERE id=p;
+    UPDATE doom.spawns SET angle=angle WHERE level=p AND id=0;
+    ASSERT doom.cached_level(sha256('fixture'::bytea),'FIXTURE') IS NULL;
     SELECT game_id INTO STRICT g FROM doom.new_game(p);
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,1);
     SELECT game_id INTO other_game FROM doom.new_game(p);

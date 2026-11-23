@@ -1,6 +1,7 @@
 """Drive the SQL simulation and read its world frames from independent connections."""
 
 import asyncio
+import hashlib
 from collections import deque
 from time import monotonic
 
@@ -33,12 +34,29 @@ async def saved_games(dsn):
         return await result.fetchall()
 
 
+async def prepare_level(db, wad, map_name):
+    result = await db.execute(
+        "SELECT to_regprocedure('doom.cached_level(bytea,text)') IS NOT NULL AS supported"
+    )
+    if (await result.fetchone())["supported"]:
+        result = await db.execute(
+            "SELECT doom.cached_level(%s,%s) AS id", (hashlib.sha256(wad).digest(), map_name)
+        )
+        level = (await result.fetchone())["id"]
+        if level is not None:
+            return level
+        query = "SELECT doom.prepare_wad(%s,%s) AS id"
+    else:
+        query = "SELECT doom.load_wad(%s,%s) AS id"
+    result = await db.execute(query, (wad, map_name))
+    return (await result.fetchone())["id"]
+
+
 async def open_game(args, wad, level=None, previous_game=None):
     async with await connect(args.dsn, autocommit=False) as db:
         if args.game is None:
             if level is None:
-                result = await db.execute("SELECT doom.load_wad(%s,%s) AS id", (wad, args.map))
-                level = (await result.fetchone())["id"]
+                level = await prepare_level(db, wad, args.map)
             result = await db.execute("SELECT game_id FROM doom.new_game(%s,%s)", (level, args.skill))
             game = (await result.fetchone())["game_id"]
             if previous_game is not None:
