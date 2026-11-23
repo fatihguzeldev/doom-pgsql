@@ -2,6 +2,7 @@ import math
 
 from .ansi import BACKGROUND, SGR, ansi_rgb, cell_width
 
+LOGO_HZ = 10
 SELECTED = "\x1b[48;2;75;42;61m"
 GOLD = "\x1b[38;2;255;209;137m"
 COPPER = "\x1b[38;2;229;140;95m"
