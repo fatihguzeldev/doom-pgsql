@@ -1,4 +1,4 @@
-"""Exercise the terminal in a PTY and edit its live game from another SQL connection."""
+"""Test SQL edits and terminal input on E1M3."""
 
 import argparse
 import fcntl
@@ -31,7 +31,7 @@ def run(wad):
     with psycopg.connect(autocommit=True) as editor, psycopg.connect(autocommit=True) as observer:
         level = editor.execute("SELECT doom.load_wad(%s,'E1M3')", (wad.read_bytes(),)).fetchone()[0]
         game, epoch, _ = editor.execute("SELECT * FROM doom.new_game(%s)", (level,)).fetchone()
-        # Replaying an interrupted batch includes an already committed prefix.
+        # Retry both tics after the first commits.
         cmds = [[1, 0, 0, False, False], [0, 0, 0.2, False, False]]
         editor.execute("CALL doom.submit(%s,%s,1,%s)", (game, epoch, Jsonb(cmds[:1])))
         editor.execute("CALL doom.submit(%s,%s,1,%s)", (game, epoch, Jsonb(cmds)))
@@ -88,9 +88,7 @@ def run(wad):
         finally:
             os.close(master)
             os.close(slave)
-    print(
-        "shareware import, committed batch replay, MVCC, live SQL edit, ANSI color and terminal input passed"
-    )
+    print("E1M3 terminal test passed")
 
 
 if __name__ == "__main__":

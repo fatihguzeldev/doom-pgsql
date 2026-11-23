@@ -1,4 +1,4 @@
-"""Check committed prefixes and retries after loss of an actual PostgreSQL session."""
+"""Retry a partially committed input batch after terminating its writer."""
 
 import argparse
 import time

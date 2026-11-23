@@ -1,4 +1,4 @@
-"""Render the nine shareware maps and complete Hangar using only recorded inputs."""
+"""Render all nine shareware maps and replay the Hangar exit route."""
 
 import argparse
 import hashlib
