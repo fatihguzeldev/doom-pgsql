@@ -16,6 +16,7 @@ DECLARE
     matrix bytea;
     bit_index bigint;
     sectors int;
+    write_turn boolean;
 BEGIN
     IF NOT (cmd IS NOT NULL) OR gid IS NULL OR generation IS NULL OR n IS NULL OR n<1
         OR abs(forward)>1 OR abs(strafe)>1 OR abs(turn)>pi() THEN RAISE EXCEPTION 'invalid input' USING ERRCODE='22023'; END IF;
@@ -36,7 +37,10 @@ BEGIN
     IF player.health<=0 THEN RETURN n; END IF;
     player.yaw := player.yaw+turn;
     player.yaw := player.yaw-floor(player.yaw/(2*pi()))*(2*pi());
-    IF turn<>0 THEN UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1; END IF;
+    -- Actions can finish the level before movement. Publish the turn first in
+    -- that case, otherwise combine it with the accepted position update.
+    write_turn:=turn<>0 AND (forward<>0 OR strafe<>0) AND NOT use_line AND NOT fire;
+    IF turn<>0 AND NOT write_turn THEN UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1; END IF;
     facing := point(cos(player.yaw),sin(player.yaw));
     IF use_line OR (fire AND g.ammo>0 AND g.next_shot<=n) THEN
         FOR contact IN SELECT t.*,l.special FROM doom.trace(g.level,gid,player.pos,
@@ -71,15 +75,20 @@ BEGIN
         before_pos := player.pos;
         loc := doom.try_move(g.level,player,player.pos+delta,true);
         IF loc.pos IS NOT NULL THEN
-            UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z WHERE game=gid AND id=-1;
+            UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z,yaw=player.yaw WHERE game=gid AND id=-1;
+            player.pos:=loc.pos; player.sector:=loc.sector; player.z:=loc.z;
             FOR contact IN SELECT l.id,l.special FROM doom.lines l WHERE l.level=g.level AND l.special<>0
                 AND box(l.a,l.b) && box(before_pos,loc.pos) AND lseg(l.a,l.b) ?# lseg(before_pos,loc.pos)
                 ORDER BY (lseg(l.a,l.b) # lseg(before_pos,loc.pos)) <-> before_pos,l.id LOOP
                 PERFORM doom.activate(g,contact.id,'cross');
                 IF contact.special IN (52,124) THEN RETURN n; END IF;
-                EXIT WHEN contact.special IN (39,97);
+                IF contact.special IN (39,97) THEN
+                    SELECT pos,sector,z INTO player.pos,player.sector,player.z FROM doom.actors WHERE game=gid AND id=-1;
+                    EXIT;
+                END IF;
             END LOOP;
-            SELECT pos,sector,z INTO player.pos,player.sector,player.z FROM doom.actors WHERE game=gid AND id=-1;
+        ELSIF write_turn THEN
+            UPDATE doom.actors SET yaw=player.yaw WHERE game=gid AND id=-1;
         END IF;
     END IF;
     FOR contact IN DELETE FROM doom.actors a WHERE a.game=gid AND a.role='pickup' AND a.sector=player.sector
