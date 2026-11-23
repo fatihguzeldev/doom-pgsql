@@ -140,16 +140,11 @@ async def loading_screen(display, target, started):
 
 
 async def play_session(session, display, keys, maps, started):
+    period = 1 / 60 if session.presenter is not None else 1 / 35
     while True:
         now = monotonic()
-        world = session.world
-        presenter = session.presenter
-        if presenter is not None:
-            yaw = session.pose[2] if session.pose is not None else None
-            view = presenter.sample(now, yaw, (*session.turns.values(), keys.pending_turn(now)))
-            world = view.image if view is not None else None
+        world, turn, fps, sql_fps = session.sample_view(now)
         if world is not None and session.status:
-            turn = sum(session.turns.values()) if presenter is None and session.predict_turn else 0
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
                 age = None
@@ -157,8 +152,8 @@ async def play_session(session, display, keys, maps, started):
                 world,
                 dict(session.status, auto_walk=keys.auto_walk),
                 turn,
-                presenter.fps(now) if presenter is not None else session.fps(now),
-                sql_fps=session.fps(now) if presenter is not None else None,
+                fps,
+                sql_fps=sql_fps,
                 automap=session.state.get("automap"),
                 pose=session.pose,
                 shot_age=age,
@@ -168,15 +163,12 @@ async def play_session(session, display, keys, maps, started):
         else:
             display.loading(session.state["map"], int(now - started), int(now * LOGO_HZ))
         try:
-            period = 1 / 60 if presenter is not None else 1 / 35
             key = await asyncio.wait_for(keys.menu_keys.get(), max(0.001, period - (monotonic() - now)))
         except TimeoutError:
             continue
         if key not in ("esc", "end"):
             continue
-        session.active.clear()
-        if presenter is not None:
-            presenter.reset()
+        session.pause()
         if session.ended:
             finished = session.status["finished"]
             following = (
@@ -206,10 +198,7 @@ async def play_session(session, display, keys, maps, started):
         if action != "resume":
             return action
         keys.set_menu(False)
-        if presenter is not None:
-            presenter.reset()
-            session.frames.token = None
-        session.active.set()
+        session.resume()
 
 
 async def play(args, keys):

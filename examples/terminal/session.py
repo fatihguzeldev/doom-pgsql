@@ -35,6 +35,30 @@ class Session:
             self._arrivals.popleft()
         return len(self._arrivals)
 
+    def sample_view(self, now):
+        sql_fps = self.fps(now)
+        if self.presenter is None:
+            turn = sum(self.turns.values()) if self.predict_turn else 0
+            return self.world, turn, sql_fps, None
+        yaw = self.pose[2] if self.pose is not None else None
+        turns = (*self.turns.values(), self.keys.pending_turn(now))
+        view = self.presenter.sample(now, yaw, turns)
+        return view.image if view is not None else None, 0, self.presenter.fps(now), sql_fps
+
+    def pause(self):
+        self.active.clear()
+        if self.presenter is not None:
+            self.presenter.reset()
+
+    def _refresh_presenter(self):
+        if self.presenter is not None:
+            self.presenter.reset()
+            self.frames.token = None
+
+    def resume(self):
+        self._refresh_presenter()
+        self.active.set()
+
     async def submit(self):
         tic = self.state["tic"] + 1
         batch = []
@@ -120,7 +144,5 @@ class Session:
                             self.keys.menu_keys.put_nowait("end")
                         await asyncio.sleep(max(0, 1 / 30 - (monotonic() - start)))
             except psycopg.OperationalError:
-                if self.presenter is not None:
-                    self.presenter.reset()
-                    self.frames.token = None
+                self._refresh_presenter()
                 await asyncio.sleep(0.1)
