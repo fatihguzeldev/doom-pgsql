@@ -69,11 +69,7 @@ BEGIN
         dist := 8/greatest(1,sqrt(forward^2+strafe^2));
         delta := point((facing[0]*forward-facing[1]*strafe)*dist,(facing[1]*forward+facing[0]*strafe)*dist);
         before_pos := player.pos;
-        loc := doom.try_move(g.level,player,player.pos+delta);
-        IF loc.pos IS NULL AND delta[0]<>0 AND delta[1]<>0 THEN
-            loc := doom.try_move(g.level,player,player.pos+point(delta[0],0));
-            IF loc.pos IS NULL THEN loc:=doom.try_move(g.level,player,player.pos+point(0,delta[1])); END IF;
-        END IF;
+        loc := doom.try_move(g.level,player,player.pos+delta,true);
         IF loc.pos IS NOT NULL THEN
             UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z WHERE game=gid AND id=-1;
             FOR contact IN SELECT l.id,l.special FROM doom.lines l WHERE l.level=g.level AND l.special<>0
