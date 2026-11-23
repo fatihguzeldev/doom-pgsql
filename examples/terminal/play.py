@@ -89,7 +89,7 @@ class Display:
         for x in range(cols):
             ray = 2*(x+0.5)/cols-1
             depth = cos+ray*sin
-            u = int(w*(1+(ray*cos-sin)/depth)/2) if depth>0 else -1
+            u = math.floor(w*(1+(ray*cos-sin)/depth)/2) if depth>0 else -1
             source.append((u, depth))
         pixels, shades = frame['pixels'], frame['shades']
         palette = self.palette
@@ -169,15 +169,30 @@ async def play(args):
 
     async def receive():
         token, revision, slot = None, None, 0
+        hashes = None
         while True:
             try:
                 async with await connect() as conn:
                     while True:
                         begin = clock()
                         slot += 1
-                        result = await conn.execute('SELECT * FROM doom.poll_frame(%s,%s,%s,%s)',
-                                                    (game,epoch,slot,token), binary=True)
+                        if args.delta:
+                            result = await conn.execute('SELECT * FROM doom.poll_tiles(%s,%s,%s,%s,%s)',
+                                                        (game,epoch,slot,token,hashes), binary=True)
+                        else:
+                            result = await conn.execute('SELECT * FROM doom.poll_frame(%s,%s,%s,%s)',
+                                                        (game,epoch,slot,token), binary=True)
                         frame = await result.fetchone()
+                        if args.delta:
+                            hashes = frame['hashes']
+                            if frame['tiles']:
+                                for channel in ('pixels','shades'):
+                                    data = bytearray(display.frame[channel]) if display.frame else bytearray(frame['width']*frame['height'])
+                                    for i,tile in enumerate(frame['tiles']):
+                                        data[tile*800:(tile+1)*800] = frame[channel][i*800:(i+1)*800]
+                                    frame[channel] = data
+                            elif revision != frame['palette_revision'] and display.frame:
+                                frame['pixels'],frame['shades'] = display.frame['pixels'],display.frame['shades']
                         if revision != frame['palette_revision']:
                             result = await conn.execute('SELECT doom.frame_palette(%s) AS rgb',(game,),binary=True)
                             data = (await result.fetchone())['rgb']
@@ -218,6 +233,7 @@ def main():
     group.add_argument('--game', type=int)
     parser.add_argument('--map', default='E1M1')
     parser.add_argument('--skill',type=int,choices=range(1,6),default=3)
+    parser.add_argument('--delta', action='store_true', help='receive changed eight-column strips')
     parser.add_argument('--predict-turn', action='store_true', help='reproject the last SQL frame during local turns')
     args = parser.parse_args()
     if not sys.stdin.isatty() or not sys.stdout.isatty():

@@ -7,9 +7,8 @@ DECLARE
     pic bytea;
     lighting bytea;
     key text;
-    room int;
-    wall point;
-    c doom.command;
+    packet record;
+    known text[];
 BEGIN
     SELECT decode(string_agg(lpad(to_hex(i),2,'0'),'' ORDER BY i),'hex') INTO lighting FROM generate_series(0,255)i;
     INSERT INTO doom.levels(name,palette,lighting,sector_count)
@@ -35,6 +34,14 @@ BEGIN
     PERFORM doom.compile_level(p); UPDATE doom.levels SET ready=true WHERE id=p;
     SELECT game_id INTO STRICT g FROM doom.new_game(p);
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,1);
+    SELECT * INTO packet FROM doom.poll_tiles(g,1,1,NULL,NULL);
+    ASSERT cardinality(packet.tiles)=20 AND packet.pixels=pic;
+    known:=packet.hashes;
+    SELECT * INTO packet FROM doom.poll_tiles(g,1,2,key,known);
+    ASSERT packet.pixels IS NULL AND packet.tiles='{}'::int[];
+    known[2]:=NULL;
+    SELECT * INTO packet FROM doom.poll_tiles(g,1,2,NULL,known);
+    ASSERT packet.tiles=ARRAY[1] AND packet.pixels=substring(pic FROM 801 FOR 800);
     ASSERT length(pic)=16000;
     ASSERT get_byte(pic,8050)=55 AND get_byte(pic,8051)=49,'masked sprite must show both the far wall and its opaque texel';
     ASSERT get_byte(pic,8099)=4 AND get_byte(pic,8000)=5,'floor and ceiling';
