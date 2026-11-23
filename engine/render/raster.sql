@@ -1,3 +1,17 @@
+-- Pack a block in one expression so PostgreSQL's executor can evaluate the
+-- eight independent texture lookups without eight PL/pgSQL iterations.
+CREATE FUNCTION doom.gather8(data bytea,base int,mask int,v float8,step float8,i int)
+RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN int8send(
+    (get_byte(data,base+(floor(v+(i+0)*step)::int & mask))::bigint << 56)
+    | (get_byte(data,base+(floor(v+(i+1)*step)::int & mask))::bigint << 48)
+    | (get_byte(data,base+(floor(v+(i+2)*step)::int & mask))::bigint << 40)
+    | (get_byte(data,base+(floor(v+(i+3)*step)::int & mask))::bigint << 32)
+    | (get_byte(data,base+(floor(v+(i+4)*step)::int & mask))::bigint << 24)
+    | (get_byte(data,base+(floor(v+(i+5)*step)::int & mask))::bigint << 16)
+    | (get_byte(data,base+(floor(v+(i+6)*step)::int & mask))::bigint << 8)
+    | (get_byte(data,base+(floor(v+(i+7)*step)::int & mask))::bigint << 0));
+
 -- Column samples are contiguous in WAD patch storage. An affine phase confined
 -- to one texel certifies a native slice even at nonintegral scale.
 CREATE FUNCTION doom.column_samples(colors bytea,w int,h int,u float8,v float8,dv float8,n int)
@@ -11,6 +25,7 @@ DECLARE
     guard float8:=1e-14*(1+abs(v)+n*abs(dv));
     result bytea;
     row_i int;
+    at_i int:=0;
 BEGIN
     IF n=1 THEN RETURN substring(colors FROM col+j+1 FOR 1); END IF;
     IF n<=h AND ((dv=1 AND phase=0) OR (least(phase,last_phase)>guard AND greatest(phase,last_phase)<1-guard)) THEN
@@ -20,7 +35,11 @@ BEGIN
     IF floor(v+(n-1)*dv)=row0 THEN RETURN decode(repeat(encode(substring(colors FROM col+j+1 FOR 1),'hex'),n),'hex'); END IF;
     result:=decode(repeat('00',n),'hex');
     IF (h&(h-1))=0 THEN
-        FOR i IN 0..n-1 LOOP
+        WHILE at_i+8<=n LOOP
+            result:=overlay(result PLACING doom.gather8(colors,col,h-1,v,dv,at_i) FROM at_i+1 FOR 8);
+            at_i:=at_i+8;
+        END LOOP;
+        FOR i IN at_i..n-1 LOOP
             result:=set_byte(result,i,get_byte(colors,col+(floor(v+i*dv)::int & (h-1))));
         END LOOP;
     ELSE
@@ -32,6 +51,22 @@ BEGIN
     RETURN result;
 END;
 $$;
+
+CREATE FUNCTION doom.flat_index(px float8,py float8,dx float8,dy float8,z float8)
+RETURNS int LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN ((floor(px+dx*z)::bigint & 63) | ((floor(py+dy*z)::bigint & 63)<<6))::int;
+
+CREATE FUNCTION doom.plane_eight(data bytea,px float8,py float8,dx float8,dy float8,depths float8[],i int)
+RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+RETURN int8send(
+    (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+0]))::bigint << 56)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+1]))::bigint << 48)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+2]))::bigint << 40)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+3]))::bigint << 32)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+4]))::bigint << 24)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+5]))::bigint << 16)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+6]))::bigint << 8)
+    | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+7]))::bigint << 0));
 
 CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea);
 CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
@@ -70,6 +105,9 @@ DECLARE
     sx float8;
     sy float8;
     eye float8;
+    at_y int;
+    image bytea;
+    plane_depths float8[];
     row_scale float8[];
     stroke doom.stroke;
     strokes doom.stroke[];
@@ -151,10 +189,16 @@ BEGIN
             column_light:=overlay(column_light PLACING substring(plane.bands FROM stroke.y0+1 FOR n) FROM stroke.y0+1 FOR n);
             IF has_overlay THEN zbuffer[stroke.y0:stroke.y1-1]:=plane.depths[stroke.y0+1:stroke.y1]; END IF;
             IF tex.pixels IS NOT NULL THEN
-                FOR y IN stroke.y0..stroke.y1-1 LOOP
-                    z:=plane.depths[y+1];
+                at_y:=stroke.y0; image:=tex.pixels; plane_depths:=plane.depths;
+                WHILE at_y+8<=stroke.y1 LOOP
+                    sample:=doom.plane_eight(image,camera_x,camera_y,sx,-sy,plane_depths,at_y+1);
+                    column_data:=overlay(column_data PLACING sample FROM at_y+1 FOR 8);
+                    at_y:=at_y+8;
+                END LOOP;
+                FOR y IN at_y..stroke.y1-1 LOOP
+                    z:=plane_depths[y+1];
                     idx:=(floor(camera_x+sx*z)::bigint & 63)+64*(floor(camera_y-sy*z)::bigint & 63);
-                    column_data:=set_byte(column_data,y,get_byte(tex.pixels,idx));
+                    column_data:=set_byte(column_data,y,get_byte(image,idx));
                 END LOOP;
             END IF;
         ELSE
