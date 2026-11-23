@@ -16,8 +16,7 @@ LANGUAGE plpgsql STABLE SET jit=off AS $$
 DECLARE
     lvl bigint;
     people text;
-    doors text;
-    surfaces text;
+
 BEGIN
     SELECT g.epoch,g.tic,g.level,l.revision,a.pos[0],a.pos[1],a.z,a.yaw,g.finished
     INTO STRICT epoch,tic,lvl,palette_revision,camera_x,camera_y,camera_z,yaw,finished
@@ -26,11 +25,7 @@ BEGIN
     -- The digest includes external SQL edits even when game.tic did not advance.
     SELECT md5(string_agg(record_send(ROW(a.id,a.sector,a.pos,a.z,a.art,CASE WHEN a.id=-1 THEN a.yaw END)),''::bytea ORDER BY a.id))
     INTO people FROM doom.actors a WHERE a.game=gid AND (a.id=-1 OR a.art IS NOT NULL AND a.health>0);
-    SELECT string_agg(ROW(m.sector,m.floor_z,m.ceiling_z)::text,'|' ORDER BY m.sector) INTO doors
-    FROM doom.movers m WHERE m.game=gid;
-    SELECT string_agg(ROW(c.sector,c.light,c.floor_id)::text,'|' ORDER BY c.sector) INTO surfaces
-    FROM doom.room_changes c WHERE c.game=gid;
-    token:=md5(concat_ws('/',gid,generation,lvl,palette_revision,people,doors,surfaces));
+    token:=md5(concat_ws('/',gid,generation,lvl,palette_revision,people,doom.opening_key(gid)));
     width:=160; height:=100; frame_slot:=slot;
     IF token IS DISTINCT FROM previous THEN
         SELECT f.pixels,f.shades INTO pixels,shades FROM doom.frame(gid,generation,slot) f;

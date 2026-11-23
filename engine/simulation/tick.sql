@@ -18,7 +18,9 @@ DECLARE
 BEGIN
     IF NOT (cmd IS NOT NULL) OR gid IS NULL OR generation IS NULL OR n IS NULL OR n<1
         OR abs(forward)>1 OR abs(strafe)>1 OR abs(turn)>pi() THEN RAISE EXCEPTION 'invalid input' USING ERRCODE='22023'; END IF;
-    UPDATE doom.games SET tic=n,last_command=cmd WHERE id=gid AND epoch=generation AND tic=n-1 AND NOT finished RETURNING * INTO g;
+    UPDATE doom.games SET tic=n,last_command=cmd,
+        still_tics=CASE WHEN forward=0 AND strafe=0 AND turn=0 THEN least(4,still_tics+1) ELSE 0 END
+    WHERE id=gid AND epoch=generation AND tic=n-1 AND NOT finished RETURNING * INTO g;
     IF NOT FOUND THEN
         SELECT * INTO STRICT g FROM doom.games WHERE id=gid;
         IF g.epoch<>generation OR (g.tic=n AND cmd IS DISTINCT FROM g.last_command) THEN

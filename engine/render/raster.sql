@@ -147,6 +147,7 @@ DECLARE
     strokes doom.stroke[];
     world doom.stroke[];
     horizon float8;
+    rev bigint;
     plane_keys int[];
     plane_index int;
     planes doom.plane_lut[];
@@ -180,12 +181,14 @@ BEGIN
     IF epoch<>generation OR slot<0 THEN RAISE EXCEPTION 'invalid frame generation or slot' USING ERRCODE='22023'; END IF;
     SELECT screen.row_scale INTO row_scale FROM doom.screen;
     fx:=cos(body.yaw); fy:=sin(body.yaw); eye:=body.z+41;
-    SELECT least(32,length(lighting)/256)-1 INTO bands FROM doom.levels WHERE id=p;
+    SELECT least(32,length(lighting)/256)-1,revision INTO bands,rev FROM doom.levels WHERE id=p;
     camera_x:=body.pos[0]; camera_y:=-body.pos[1];
-    SELECT array_agg(s),CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
+    SELECT c.strokes INTO world FROM doom.view_cache c WHERE c.game=gid AND c.revision=rev AND c.sector=body.sector
+        AND c.x=camera_x AND c.y=body.pos[1] AND c.yaw=body.yaw AND c.z=body.z AND c.openings=doom.opening_key(gid);
+    IF world IS NULL THEN SELECT array_agg(s) INTO world FROM doom.world_strokes(p,gid,body,fx,fy)s; END IF;
+    SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
         CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
-    ) ELSE 'Infinity'::float8 END
-    INTO world,horizon FROM doom.world_strokes(p,gid,body,fx,fy)s;
+    ) ELSE 'Infinity'::float8 END INTO horizon FROM unnest(world);
     SELECT array_agg(s ORDER BY x,(kind>=3),CASE WHEN kind>=3 THEN -depth END,kind,art,y0) INTO strokes FROM (
         SELECT * FROM unnest(world) UNION ALL
         SELECT * FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)

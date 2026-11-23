@@ -3,6 +3,7 @@ CREATE TABLE doom.games (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, level bigint NOT NULL REFERENCES doom.levels,
     epoch bigint NOT NULL DEFAULT 1, tic bigint NOT NULL DEFAULT 0, difficulty int NOT NULL CHECK(difficulty BETWEEN 1 AND 5),
     last_command doom.command, finished boolean NOT NULL DEFAULT false, secret_exit boolean NOT NULL DEFAULT false, ammo int NOT NULL DEFAULT 50,
+    still_tics smallint NOT NULL DEFAULT 0,
     armor int NOT NULL DEFAULT 0, keys int NOT NULL DEFAULT 0, next_shot bigint NOT NULL DEFAULT 0
 ) WITH (fillfactor=80);
 CREATE TABLE doom.actors (
@@ -34,6 +35,7 @@ RETURNS TABLE(game_id bigint,epoch bigint,tic bigint) LANGUAGE plpgsql AS $$
 DECLARE
     g bigint;
 BEGIN
+    PERFORM 1 FROM doom.levels WHERE id=p_level AND ready FOR SHARE;
     INSERT INTO doom.games(level,difficulty) SELECT id,skill FROM doom.levels WHERE id=p_level AND ready RETURNING id INTO STRICT g;
     INSERT INTO doom.actors(game,id,sector,pos,z,yaw,code,role,art,health,radius,height)
     SELECT g,CASE WHEN t.role='player' THEN -1 ELSE s.id END,r.id,s.pos,r.floor_z,radians(s.angle),

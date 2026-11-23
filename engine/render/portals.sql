@@ -113,6 +113,22 @@ INSERT INTO doom.screen SELECT ARRAY(SELECT atan((x-79.5)/80) FROM generate_seri
 CREATE TYPE doom.stroke AS (
     x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int
 );
+-- One stationary viewpoint per game. Moving actors do not invalidate the opaque
+-- world. Geometry revisions and live openings are checked in the frame snapshot.
+CREATE TABLE doom.view_cache (
+    game bigint PRIMARY KEY REFERENCES doom.games ON DELETE CASCADE, revision bigint NOT NULL,
+    x float8 NOT NULL,y float8 NOT NULL,z float8 NOT NULL,yaw float8 NOT NULL,sector int NOT NULL,
+    openings text NOT NULL, strokes doom.stroke[] NOT NULL
+);
+CREATE TABLE doom.view_edges (
+    game bigint REFERENCES doom.view_cache ON DELETE CASCADE,bucket int,edges doom.edge[] NOT NULL,
+    PRIMARY KEY(game,bucket)
+);
+CREATE FUNCTION doom.opening_key(g bigint) RETURNS text LANGUAGE sql STABLE STRICT AS $$
+    SELECT md5(concat_ws('/',
+        (SELECT md5(string_agg(record_send(ROW(sector,floor_z,ceiling_z)),''::bytea ORDER BY sector)) FROM doom.movers WHERE game=g),
+        (SELECT md5(string_agg(record_send(ROW(sector,light,floor_id)),''::bytea ORDER BY sector)) FROM doom.room_changes WHERE game=g)));
+$$;
 -- kind 0 plane (v is world height), 1 solid column, 2 sky, 3 masked column.
 CREATE FUNCTION doom.world_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8)
 RETURNS SETOF doom.stroke LANGUAGE plpgsql STABLE STRICT AS $$
@@ -151,7 +167,14 @@ BEGIN
     WHILE tail>0 LOOP
         win:=queue[tail]; tail:=tail-1;
         CONTINUE WHEN position(B'1' IN substring(open_bits FROM win.lo+1 FOR win.hi-win.lo+1))=0;
-        SELECT m.edges INTO edges FROM doom.mesh m WHERE m.level=p AND m.sector=win.sector;
+        edges:=NULL;
+        IF win.entry=-1 THEN
+            SELECT b.edges INTO edges FROM doom.view_cache v JOIN doom.view_edges b USING(game)
+            WHERE v.game=g AND v.x=body.pos[0] AND v.y=body.pos[1] AND v.sector=win.sector
+                AND v.revision=(SELECT revision FROM doom.levels WHERE id=p)
+                AND b.bucket=(floor(body.yaw*8/pi()+0.5)::int & 15);
+        END IF;
+        IF edges IS NULL THEN SELECT m.edges INTO edges FROM doom.mesh m WHERE m.level=p AND m.sector=win.sector; END IF;
         front:=rooms[1+win.sector];
         FOR wall IN SELECT * FROM doom.visible(edges,win,body.pos,fx,fy) LOOP
             e:=wall.wall; back:=rooms[1+e.dest]; open_from:=NULL;

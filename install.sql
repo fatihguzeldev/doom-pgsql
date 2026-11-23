@@ -15,4 +15,5 @@ CREATE SCHEMA doom;
 \ir engine/render/portals.sql
 \ir engine/render/raster.sql
 \ir engine/render/poll.sql
+\ir engine/render/cache.sql
 COMMIT;
