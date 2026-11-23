@@ -93,6 +93,25 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    async def test_first_frame_after_a_stall_skips_stale_motion(self):
+        player = Presenter(Model())
+        task = asyncio.create_task(player.run())
+        try:
+            for tic, arrived in enumerate((10, 10.2, 11.2, 12.2)):
+                with patch("examples.terminal.presentation.monotonic", return_value=arrived):
+                    player.submit(image(5 * tic), tic, arrived)
+                    await self.ready(player)
+                view = player.sample(arrived)
+                if tic == 2:
+                    self.assertEqual(view.image, image(10))
+                    self.assertEqual(view.fraction, 1)
+                if tic in (1, 3):
+                    self.assertLess(view.fraction, 1)
+                player.sample(arrived + 0.2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_key_preview_reconciles_across_the_yaw_wrap(self):
         player, keys = Presenter(Model()), Keyboard()
         task = asyncio.create_task(player.run())

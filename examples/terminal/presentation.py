@@ -72,6 +72,7 @@ class Presenter:
 
     async def run(self):
         previous = None
+        last_gap = 0.0
         generation = None
         while True:
             await self._ready.wait()
@@ -82,18 +83,21 @@ class Presenter:
             image, tic, arrived, yaw = current
             if generation != self._generation:
                 previous = None
+                last_gap = 0.0
                 generation = self._generation
+            gap = arrived - previous[2] if previous is not None else 0.0
+            stalled = gap > max(0.5, 2 * last_gap)
+            last_gap = gap
             if previous is not None and previous[0].rgb == image.rgb and previous[3] == yaw:
                 previous = current
                 continue
             start_yaw = previous[3] if previous is not None else yaw
-            if previous is None or image.rgb == previous[0].rgb:
+            if previous is None or stalled or image.rgb == previous[0].rgb:
                 views = (await self._infer(self.engine.upscale, image),)
                 interval = 0
             else:
                 views = await self._infer(self.engine.infer_pair, previous[0], image)
-                # catch up after a sql stall instead of replaying its entire duration
-                interval = min(0.2, arrived - previous[2]) / len(views)
+                interval = min(0.2, gap) / len(views)
             if generation != self._generation:
                 continue
             previous = current
