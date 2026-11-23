@@ -64,7 +64,10 @@ BEGIN
     UPDATE doom.sectors SET ceiling_z=0 WHERE level=p AND id=1;
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,3,key);
     ASSERT get_byte(pic,8050)=153 AND get_byte(pic,8051)=153,'closed portal must hide sprites';
+    UPDATE doom.actors SET yaw=2*pi() WHERE game=g AND id=-1;
     ASSERT doom.tick(g,1,1,1,0,0,false,false)=1;
+    ASSERT (SELECT yaw=2*pi() FROM doom.actors WHERE game=g AND id=-1),'a move without a turn changed edited yaw';
+    UPDATE doom.actors SET yaw=0 WHERE game=g AND id=-1;
     ASSERT doom.tick(g,1,1,1,0,0,false,false)=1;
     ASSERT (SELECT pos~=point(8,0) FROM doom.actors WHERE game=g AND id=-1),'duplicate input moved twice';
     BEGIN PERFORM doom.tick(g,1,1,-1,0,0,false,false); RAISE EXCEPTION 'accepted conflicting input';

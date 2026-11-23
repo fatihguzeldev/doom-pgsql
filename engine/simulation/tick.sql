@@ -75,7 +75,8 @@ BEGIN
         before_pos := player.pos;
         loc := doom.try_move(g.level,player,player.pos+delta,true);
         IF loc.pos IS NOT NULL THEN
-            UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z,yaw=player.yaw WHERE game=gid AND id=-1;
+            UPDATE doom.actors SET pos=loc.pos,sector=loc.sector,z=loc.z,
+                yaw=CASE WHEN write_turn THEN player.yaw ELSE yaw END WHERE game=gid AND id=-1;
             player.pos:=loc.pos; player.sector:=loc.sector; player.z:=loc.z;
             FOR contact IN SELECT l.id,l.special FROM doom.lines l WHERE l.level=g.level AND l.special<>0
                 AND box(l.a,l.b) && box(before_pos,loc.pos) AND lseg(l.a,l.b) ?# lseg(before_pos,loc.pos)
