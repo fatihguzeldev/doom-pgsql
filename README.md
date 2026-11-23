@@ -1,31 +1,31 @@
 ![doom-pgsql](assets/logo.png)
 
-postgres runs the game and renders the world.
+doom, but the engine is rewritten in sql.
 
 ```sh
 ./play
 ```
 
-press `enter` to start the bundled shareware episode. use the arrow keys in the menu to pick a map or difficulty.
+hit `enter` for e1m1, or pick a map and difficulty with the arrow keys. the shareware wad is included.
 
 ## controls
 
-move with `wasd`. turn with `j` and `l` or the left and right arrows. `space` fires, `e` opens doors and `r` toggles auto-walk. press `esc` to pause or `q` to quit.
+move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fire and `e` to open doors or hit switches. `r` toggles auto-walk, `esc` pauses and `q` quits.
 
 ## flags
 
-| flag | what it does |
+| flag | use |
 | --- | --- |
-| `--wad doom2.wad` | use your own wad with maps and textures |
-| `--map e1m7` | pick the starting map |
-| `--skill 3` | set the difficulty from 1 to 5 (default 3) |
+| `--wad doom2.wad` | load a wad with its own maps and textures |
+| `--map e1m7` | start on a specific map |
+| `--skill 3` | choose a difficulty from 1 to 5 (default 3) |
 | `--game 1` | resume a saved game by id |
-| `--dsn <connection>` | connect to a postgres database with the game installed |
-| `--rtt-ms 50` | add 50 ms of simulated round-trip delay for this run (0 disables it) |
-| `--delta` | fetch only the parts of the frame that changed |
+| `--dsn <connection>` | play on an existing postgres database with the engine installed |
+| `--rtt-ms 0` | set the local round-trip delay in milliseconds (0 turns it off) |
+| `--delta` | fetch only the strips of the frame that changed |
 | `--predict-turn` | show turns before the next frame arrives |
 | `--mute` | turn off sound |
 
-edit [settings.yaml](settings.yaml) to change the local database limits and simulated delay.
+set local cpu, ram, swap and simulated latency in [settings.yaml](settings.yaml). `--dsn` skips the file.
 
 `docker compose down` stops the database and keeps your saves.
