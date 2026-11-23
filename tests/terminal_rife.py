@@ -53,9 +53,11 @@ class RifeModelsTest(unittest.TestCase):
         self.assertEqual(frames[-1], net.upscale(last))
         centers = []
         for image in frames:
-            self.assertEqual((image.width, image.height), (160, 100))
-            rgb = np.frombuffer(image.rgb, dtype=np.uint8).reshape(100, 160, 3)
-            centers.append(np.where(rgb[:, :, 0] > 120)[1].mean())
+            self.assertEqual((image.width, image.height), (320, 200))
+            blocks = np.frombuffer(image.rgb, dtype=np.uint8).reshape(40, 5, 64, 5, 3)
+            self.assertTrue((blocks == blocks[:, :1, :, :1]).all())
+            centers.append(np.where(blocks[:, 0, :, 0, 0] > 120)[1].mean())
+        np.testing.assert_array_equal(blocks[:, 0, :, 0], np.roll(pixels, 8, axis=1))
         for step in np.diff(centers):
-            self.assertGreater(step, 1)
-            self.assertLess(step, 7)
+            self.assertGreater(step, 0.4)
+            self.assertLess(step, 2.8)

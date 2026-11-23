@@ -1,4 +1,4 @@
-"""RIFE 4.25 lite interpolation and FSRCNN 3x upscaling for the terminal."""
+"""Interpolate the 64×40 SQL image and expand its pixels onto Doom's 320×200 canvas."""
 
 import hashlib
 import os
@@ -15,13 +15,6 @@ RIFE = (
         "8d1488a82e19fd2f2ca5b3ee1d1bfacd6787b9df/rife_v425lite.onnx"
     ),
     "702802d0862ab78f2d72133c6bc3768e7e89b81756f7cd51d1055a2fe3d06577",
-)
-FSRCNN = (
-    (
-        "https://raw.githubusercontent.com/Saafke/FSRCNN_Tensorflow/"
-        "6a4812c4ef1c4f5947d79beafa32a05a6eb4a94d/models/FSRCNN_x3.pb"
-    ),
-    "efd38655a815908c6c8954db6052f128e76a735f1de657894c477d0dc0b64481",
 )
 
 
@@ -47,7 +40,7 @@ def _fetch(directory, url, sha256):
     return path
 
 
-def model_paths(directory=None):
+def model_path(directory=None):
     if directory is None:
         directory = (
             Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
@@ -55,29 +48,22 @@ def model_paths(directory=None):
         )
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    return _fetch(directory, *RIFE), _fetch(directory, *FSRCNN)
+    return _fetch(directory, *RIFE)
 
 
 class Rife:
     def __init__(self, model_dir=None):
-        import cv2
         import numpy as np
         import onnxruntime as ort
 
-        rife, fsrcnn = model_paths(model_dir)
-        self._cv = cv2
         self._np = np
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
         options.add_session_config_entry("session.intra_op.allow_spinning", "0")
         self._net = ort.InferenceSession(
-            str(rife), options, providers=["CPUExecutionProvider"]
+            str(model_path(model_dir)), options, providers=["CPUExecutionProvider"]
         )
-        cv2.setNumThreads(1)
-        self._superres = cv2.dnn_superres.DnnSuperResImpl_create()
-        self._superres.readModel(str(fsrcnn))
-        self._superres.setModel("fsrcnn", 3)
         self._times = [
             np.full((1, 1, 1, 1), n / 5, dtype=np.float32) for n in range(1, 5)
         ]
@@ -92,11 +78,10 @@ class Rife:
         padded = self._np.pad(rgb, ((0, 24), (0, 0), (0, 0)), mode="edge")
         return padded.transpose(2, 0, 1)[None].astype(self._np.float32) / 255
 
-    def _upscale(self, rgb):
-        cv = self._cv
-        bgr = self._superres.upsample(cv.cvtColor(rgb, cv.COLOR_RGB2BGR))
-        pixels = cv.resize(bgr, (160, 100), interpolation=cv.INTER_AREA)
-        return Image(160, 100, cv.cvtColor(pixels, cv.COLOR_BGR2RGB).tobytes())
+    @staticmethod
+    def _upscale(rgb):
+        pixels = rgb.repeat(5, axis=0).repeat(5, axis=1)
+        return Image(320, 200, pixels.tobytes())
 
     def upscale(self, image):
         return self._upscale(self._rgb(image))
@@ -118,4 +103,4 @@ class Rife:
 
 
 if __name__ == "__main__":
-    model_paths()
+    model_path()

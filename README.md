@@ -23,7 +23,7 @@ move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fir
 | `--dsn <connection>` | play on an existing postgres database with the engine installed |
 | `--rtt-ms 0` | set the local round-trip delay in milliseconds (0 turns it off) |
 | `--delta` | fetch only the strips of the frame that changed |
-| `--rife` | draw at 64×40, upscale to 160×100 and show up to four rife frames between sql frames |
+| `--rife` | draw at 64×40, keep the pixels sharp at 320×200 and show up to four rife frames between sql frames |
 | `--predict-turn` | show turns before the next frame arrives |
 | `--mute` | turn off sound |
 
