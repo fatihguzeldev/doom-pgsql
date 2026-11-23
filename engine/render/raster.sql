@@ -1,4 +1,4 @@
-CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea,stretched bytea,quads bytea,quad_start int);
+CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea,stretched bytea,quads bytea,quad_start int,column_ids int[],posts doom.sprite_posts);
 CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
 RETURNS SETOF doom.stroke LANGUAGE sql STABLE AS $$
     WITH visible_actors AS MATERIALIZED (
@@ -44,6 +44,8 @@ DECLARE
     stroke doom.stroke;
     strokes doom.stroke[];
     world doom.stroke[];
+    runs doom.wall_run[];
+    run_columns int;
     base_color bytea;
     base_light bytea;
     base_depth float8[];
@@ -65,11 +67,7 @@ DECLARE
     sx float8; sy float8;
     sparse_tex int;
     image bytea;
-    plane_depths float8[];
-    at_y int;
     solid_art int;
-    first_col int;
-    last_col int;
     tex doom.tile;
     bands int;
     band int;
@@ -96,6 +94,11 @@ DECLARE
     last_material int;
     prior_sample bytea;
     source_column int;
+    runs_start int;
+    runs_end int;
+    span int4range;
+    low_i int;
+    high_i int;
     opacity bytea;
     level_light int;
     zbuffer float8[]; -- Only allocated for columns with masked surfaces or sprites.
@@ -120,19 +123,37 @@ BEGIN
             AND c.y=body.pos[1] AND c.yaw=body.yaw AND c.z=body.z AND c.openings=doom.opening_key(gid);
     END IF;
     IF base_color IS NULL THEN
-        SELECT array_agg(s) INTO world FROM doom.world_strokes(p,gid,body,fx,fy)s;
-        SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
-            CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
-        ) ELSE 'Infinity'::float8 END, bool_or(kind>=3),sum(y1-y0) FILTER(WHERE kind=0),
-        count(*)=160 AND bool_and(kind=1 AND y0=0 AND y1=100) AND count(art)=160 AND min(art)=max(art),min(art)
-        INTO horizon,has_masks,plane_area,full_wall,solid_art FROM unnest(world);
+        SELECT v.strokes,v.runs INTO world,runs FROM doom.project_world(p,gid,body,fx,fy)v;
+        IF runs IS NOT NULL AND world IS NULL AND NOT background_only THEN
+            SELECT sum((projection).hi-(projection).lo+1),min(((projection).wall).mid_id),
+                min(((projection).wall).mid_id)=max(((projection).wall).mid_id),
+                max(1/least((projection).inv0+(projection).lo*(projection).inv_step,
+                            (projection).inv0+(projection).hi*(projection).inv_step))
+            INTO run_columns,solid_art,full_wall,horizon FROM unnest(runs);
+            full_wall:=full_wall AND run_columns=160;
+        END IF;
+        IF runs IS NOT NULL AND NOT full_wall THEN
+            world:=world||ARRAY(SELECT s FROM doom.wall_rays(runs)s);
+            runs:=NULL;
+        END IF;
+        IF NOT full_wall THEN
+            SELECT CASE WHEN sum(y1-y0) FILTER(WHERE kind<3)=16000 THEN max(
+                CASE WHEN kind=0 THEN greatest(row_scale[y0+1],row_scale[y1])*abs(eye-v) ELSE depth END
+            ) ELSE 'Infinity'::float8 END, bool_or(kind>=3),sum(y1-y0) FILTER(WHERE kind=0),
+            count(*)=160 AND bool_and(kind=1 AND y0=0 AND y1=100) AND count(art)=160 AND min(art)=max(art),min(art)
+            INTO horizon,has_masks,plane_area,full_wall,solid_art FROM unnest(world);
+        END IF;
     END IF;
     IF NOT background_only THEN
         SELECT array_agg(s) INTO sprites FROM doom.sprite_strokes(p,gid,body,fx,fy,horizon)s;
     END IF;
+    IF runs IS NOT NULL AND sprites IS NOT NULL THEN
+        world:=ARRAY(SELECT s FROM doom.wall_rays(runs)s);
+        runs:=NULL;
+    END IF;
     full_wall:=full_wall AND sprites IS NULL AND NOT background_only;
     -- Small exposed plane fragments cost less to sample than a screen transpose.
-    dense_flats:=plane_area>=3200;
+    dense_flats:=plane_area>=10000;
     IF dense_flats THEN
         flat_colors:=doom.flat_background(world,camera_x,camera_y,fx,fy,eye,row_scale);
         colors[0:159]:=flat_colors;
@@ -163,47 +184,50 @@ BEGIN
     LEFT JOIN doom.plane_tables t ON t.level=p AND t.distance=abs(eye-v) AND t.light=s.light;
     -- Read and detoast only the textures actually present in this view.
     IF full_wall THEN
-        SELECT a.w,a.h,substring(a.pixels FROM 1),NULL::bytea,NULL::bytea,NULL::bytea,0
-        INTO STRICT tex FROM doom.art a WHERE a.id=solid_art;
-        SELECT min(col),max(col) INTO first_col,last_col FROM unnest(world)w,
-            LATERAL(SELECT ((floor(w.u)::int%tex.w)+tex.w)%tex.w AS col)c WHERE w.dv<2.0/3;
-        IF first_col IS NOT NULL THEN
-            tex.quad_start:=first_col;
-            SELECT substring(a.quads FROM 1+16*tex.h*first_col FOR 16*tex.h*(1+last_col-first_col))
-            INTO tex.quads FROM doom.art a WHERE a.id=solid_art;
-        END IF;
-        -- All opaque samples at the same source column, anchor and certified
-        -- scale band are identical. Evaluate them once, then scatter by x.
-        WITH rays AS MATERIALIZED (
-            SELECT x,((floor(u)::int%tex.w)+tex.w)%tex.w AS col,v,dv,round(v+49.5*dv) AS origin,
-                width_bucket(dv,cuts) AS bin,1e-12*(1+abs(v)+100*abs(dv)) AS margin
-            FROM unnest(world)
-        ), requests AS MATERIALIZED (
-            SELECT x,col,origin,v,dv,CASE WHEN tex.quads IS NOT NULL AND dv<2.0/3 AND v=origin-49.5*dv
-                AND dv>cuts[bin]+margin AND dv<cuts[bin+1]-margin THEN bin END AS bin FROM rays
+        SELECT a.w,a.h,substring(a.pixels FROM 1),a.column_ids INTO tex.w,tex.h,tex.pixels,tex.column_ids
+        FROM doom.art a WHERE a.id=solid_art;
+        WITH columns AS MATERIALIZED (
+            SELECT q.x,coalesce(tex.column_ids[1+c.col],c.col) AS col,q.v,q.dv,
+                round(q.v+49.5*q.dv) AS origin,width_bucket(q.dv,cuts) AS bin,
+                1e-12*(1+abs(q.v)+100*abs(q.dv)) AS margin,
+                least(bands,(255-q.light)/8+floor(q.depth/96)::int) AS band
+            FROM (SELECT * FROM unnest(world) UNION ALL SELECT * FROM doom.wall_rays(runs)) q,
+                LATERAL(SELECT ((floor(q.u)::int%tex.w)+tex.w)%tex.w AS col)c
+        ), bounds AS (
+            SELECT min(col) AS lo,max(col) AS hi FROM columns WHERE dv<2.0/3
+        ), atlas AS MATERIALIZED (
+            SELECT lo,substring(a.quads FROM 1+16*tex.h*lo FOR 16*tex.h*(1+hi-lo)) AS data
+            FROM bounds,doom.art a WHERE a.id=solid_art
+        ), requests AS (
+            SELECT x,col,origin,v,dv,CASE WHEN atlas.data IS NOT NULL AND dv<2.0/3 AND v=origin-49.5*dv
+                AND dv>cuts[bin]+margin AND dv<cuts[bin+1]-margin THEN bin END AS bin FROM columns,atlas
         ), groups AS (
             SELECT col,origin,bin,min(v) AS v,min(dv) AS dv,array_agg(x) AS xs FROM requests
             GROUP BY col,origin,bin,CASE WHEN bin IS NULL THEN v END,CASE WHEN bin IS NULL THEN dv END
         ), sampled AS MATERIALIZED (
             SELECT xs,CASE WHEN bin IS NULL THEN doom.column_samples(tex.pixels,tex.w,tex.h,col,v,dv,100)
-                ELSE doom.wall_strip(tex.quads,16*tex.h*(col-tex.quad_start),16*((origin::bigint & (tex.h-1))::int),16*tex.h-1,
-                    quad_offsets,1+(bin-1)*25) END AS pixels FROM groups
+                ELSE doom.wall_strip(atlas.data,16*tex.h*(col-atlas.lo),16*((origin::bigint & (tex.h-1))::int),
+                    16*tex.h-1,quad_offsets,1+(bin-1)*25) END AS strip FROM groups,atlas
         )
-        SELECT string_agg(s.pixels,''::bytea ORDER BY x) INTO pixels FROM sampled s,unnest(s.xs)x;
-        SELECT string_agg(shade_run[1+least(bands,(255-w.light)/8+floor(w.depth/96)::int)],''::bytea ORDER BY w.x)
-        INTO shades FROM unnest(world)w;
+        SELECT (SELECT string_agg(strip,''::bytea ORDER BY x) FROM sampled,unnest(xs)x),
+            (SELECT string_agg(shade_run[columns.band+1],''::bytea ORDER BY x) FROM columns)
+        INTO pixels,shades;
         RETURN NEXT; RETURN;
     ELSE
         SELECT array_agg(a.id ORDER BY a.id),array_agg(ROW(a.w,a.h,substring(a.pixels FROM 1),
             CASE WHEN used.masked THEN substring(a.mask FROM 1) END,
             CASE WHEN used.stretch THEN substring(a.stretched FROM 1) END,
-            substring(a.quads FROM 1+16*a.h*used.lo FOR 16*a.h*(1+used.hi-used.lo)),used.lo)::doom.tile ORDER BY a.id) INTO art_ids,bank
+            CASE WHEN used.lo IS NOT NULL THEN substring(a.quads FROM 1+16*a.h*slice.lo FOR 16*a.h*(1+slice.hi-slice.lo)) END,slice.lo,NULL,a.posts)::doom.tile ORDER BY a.id) INTO art_ids,bank
         FROM (SELECT art,bool_or(s.kind>=3) AS masked,bool_or(s.kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch,
             min(col) FILTER(WHERE ruler) AS lo,max(col) FILTER(WHERE ruler) AS hi
-            FROM unnest(strokes)s JOIN doom.art t ON t.id=s.art,
-                 LATERAL(SELECT ((floor(s.u)::int%t.w)+t.w)%t.w AS col,s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
+            FROM unnest(strokes)s,
+                LATERAL(SELECT floor(s.u)::int AS col,s.kind=1 AND dv<2.0/3 AND y1-y0>=40 AS ruler)c
             WHERE s.kind>0 OR NOT dense_flats GROUP BY art) used
-        JOIN doom.art a ON a.id=used.art;
+        JOIN doom.art a ON a.id=used.art
+        CROSS JOIN LATERAL (SELECT CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
+                THEN ((used.lo%a.w)+a.w)%a.w ELSE 0 END AS lo,
+            CASE WHEN floor(used.lo::float8/a.w)=floor(used.hi::float8/a.w)
+                THEN ((used.hi%a.w)+a.w)%a.w ELSE a.w-1 END AS hi) slice;
     END IF;
     IF has_masks OR sprites IS NOT NULL THEN
         SELECT array_agg(DISTINCT x) INTO overlay_columns FROM unnest(strokes) WHERE kind>=3;
@@ -236,16 +260,8 @@ BEGIN
                     image:=(bank[array_position(art_ids,stroke.art)]).pixels;
                     sparse_tex:=stroke.art;
                 END IF;
-                at_y:=stroke.y0; plane_depths:=plane.depths;
-                WHILE at_y+8<=stroke.y1 LOOP
-                    sample:=doom.plane_eight(image,camera_x,camera_y,sx,-sy,plane_depths,at_y+1);
-                    column_data:=overlay(column_data PLACING sample FROM at_y+1 FOR 8);
-                    at_y:=at_y+8;
-                END LOOP;
-                FOR y IN at_y..stroke.y1-1 LOOP
-                    idx:=doom.flat_index(camera_x,camera_y,sx,-sy,plane_depths[y+1]);
-                    column_data:=set_byte(column_data,y,get_byte(image,idx));
-                END LOOP;
+                sample:=doom.plane_strip(image,camera_x,camera_y,sx,-sy,plane.depths,stroke.y0,stroke.y1);
+                column_data:=overlay(column_data PLACING sample FROM stroke.y0+1 FOR n);
             END IF;
 
         ELSE
@@ -255,6 +271,35 @@ BEGIN
             IF stroke.kind>=3 AND NOT (stroke.depth < ANY(zbuffer[stroke.y0:stroke.y1-1])) THEN CONTINUE; END IF;
             band:=CASE WHEN stroke.kind=2 THEN 0 ELSE least(bands,level_light+floor(stroke.depth/96)::int) END;
             source_column:=floor(stroke.u)::int;
+            IF stroke.kind=4 AND (tex.posts).offsets IS NOT NULL AND stroke.dv>0
+                AND stroke.v>=0 AND stroke.v+(n-1)*stroke.dv<tex.h THEN
+                source_column:=((source_column%tex.w)+tex.w)%tex.w;
+                runs_start:=(tex.posts).offsets[1+source_column];
+                runs_end:=(tex.posts).offsets[2+source_column]-1;
+                sample:=NULL;
+                FOR k IN runs_start..runs_end LOOP
+                    span:=(tex.posts).runs[k];
+                    low_i:=doom.post_row(lower(span),stroke.v,stroke.dv,n);
+                    high_i:=doom.post_row(upper(span),stroke.v,stroke.dv,n);
+                    CONTINUE WHEN low_i>=high_i OR NOT (stroke.depth < ANY(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]));
+                    -- Keep the original sampling phase, even at an exact texel boundary.
+                    IF sample IS NULL THEN sample:=doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n); END IF;
+                    IF stroke.depth < ALL(zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]) THEN
+                        column_data:=overlay(column_data PLACING substring(sample FROM low_i+1 FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);
+                        column_light:=overlay(column_light PLACING substring(shade_run[band+1] FOR high_i-low_i) FROM stroke.y0+low_i+1 FOR high_i-low_i);
+                        zbuffer[stroke.y0+low_i:stroke.y0+high_i-1]:=array_fill(stroke.depth,ARRAY[high_i-low_i]);
+                    ELSE
+                        FOR i IN low_i..high_i-1 LOOP
+                            idx:=stroke.y0+i;
+                            IF stroke.depth<zbuffer[idx] THEN
+                                column_data:=set_byte(column_data,idx,get_byte(sample,i)); column_light:=set_byte(column_light,idx,band);
+                                zbuffer[idx]:=stroke.depth;
+                            END IF;
+                        END LOOP;
+                    END IF;
+                END LOOP;
+                CONTINUE;
+            END IF;
             IF stroke.kind=1 THEN
                 anchor:=round(stroke.v-(stroke.y0-49.5)*stroke.dv);
                 guard:=1e-12*(1+abs(stroke.v)+n*abs(stroke.dv));

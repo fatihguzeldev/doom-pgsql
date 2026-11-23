@@ -49,3 +49,49 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+DO $$
+DECLARE
+    posts doom.sprite_posts;
+    idx int;
+    v float8;
+    step float8;
+    expected int;
+BEGIN
+    -- Equal colors can share a column only when their opacity agrees.
+    ASSERT doom.wall_column_ids(decode('111211121112','hex'),decode('ffff00ffffff','hex'),3,2)=ARRAY[0,1,0];
+    ASSERT doom.wall_column_ids(decode('01020304','hex'),NULL,2,2) IS NULL;
+    posts:=doom.sprite_posts(decode('00000000ff00ffff0000ffff','hex'),3,4);
+    ASSERT posts.offsets=ARRAY[1,1,3,4];
+    ASSERT posts.runs=ARRAY[int4range(0,1),int4range(2,4),int4range(2,4)];
+    FOREACH v IN ARRAY ARRAY[0,0.1,0.9999999999999999,2.5]::float8[] LOOP
+        FOREACH step IN ARRAY ARRAY[0.1,0.25,1,1.3333333333333333,7]::float8[] LOOP
+            FOR idx IN 0..24 LOOP
+                SELECT coalesce(min(i),100) INTO expected FROM generate_series(0,99)i WHERE floor(v+i*step)>=idx;
+                ASSERT doom.post_row(idx,v,step,100)=expected;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE
+    tile bytea;
+    depths float8[];
+    first_y int;
+    last_y int;
+    expected bytea;
+BEGIN
+    SELECT decode(string_agg(lpad(to_hex((i*37+i/64)&255),2,'0'),'' ORDER BY i),'hex')
+        INTO tile FROM generate_series(0,4095)i;
+    SELECT array_agg(37.0::float8*80/abs(y-49.5) ORDER BY y) INTO depths FROM generate_series(0,99)y;
+    FOREACH first_y IN ARRAY ARRAY[0,1,47,91,96,99] LOOP
+        FOR last_y IN first_y+1..100 LOOP
+            SELECT string_agg(substring(tile FROM 1+doom.flat_index(13,-9,0.8,-0.6,depths[y+1]) FOR 1),
+                ''::bytea ORDER BY y) INTO expected FROM generate_series(first_y,last_y-1)y;
+            ASSERT doom.plane_strip(tile,13,-9,0.8,-0.6,depths,first_y,last_y)=expected;
+        END LOOP;
+    END LOOP;
+END;
+$$;

@@ -129,10 +129,29 @@ CREATE FUNCTION doom.opening_key(g bigint) RETURNS text LANGUAGE sql STABLE STRI
         (SELECT md5(string_agg(record_send(ROW(sector,floor_z,ceiling_z)),''::bytea ORDER BY sector)) FROM doom.movers WHERE game=g),
         (SELECT md5(string_agg(record_send(ROW(sector,light,floor_id)),''::bytea ORDER BY sector)) FROM doom.room_changes WHERE game=g)));
 $$;
+CREATE TYPE doom.wall_run AS (projection doom.projection,anchor float8,light int);
+CREATE TYPE doom.world_view AS (strokes doom.stroke[],runs doom.wall_run[]);
+
+-- Expand only at the consumer. The inverse-depth expression and sampling phase
+-- use the same evaluation order as clipped columns in the portal walk.
+CREATE FUNCTION doom.wall_rays(runs doom.wall_run[]) RETURNS SETOF doom.stroke
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    SELECT x,0,100,1,e.mid_id,
+        e.u+e.len*greatest(0,least(1,((x-79.5::float8)/80*p.z0-p.r0)/(d.inv*p.k))),
+        r.anchor-49.5*(z.depth/80),z.depth/80,z.depth,r.light
+    FROM unnest(runs) r CROSS JOIN LATERAL (SELECT (r.projection).*) p
+    CROSS JOIN LATERAL (SELECT (p.wall).*) e CROSS JOIN LATERAL generate_series(p.lo,p.hi)x
+    CROSS JOIN LATERAL (SELECT p.inv0+x*p.inv_step AS inv)d
+    CROSS JOIN LATERAL (SELECT 1/d.inv AS depth)z;
+$$;
+
 -- kind 0 plane (v is world height), 1 solid column, 2 sky, 3 masked column.
-CREATE FUNCTION doom.world_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8)
-RETURNS SETOF doom.stroke LANGUAGE plpgsql STABLE STRICT AS $$
+CREATE FUNCTION doom.project_world(p bigint,g bigint,body doom.actors,fx float8,fy float8)
+RETURNS doom.world_view LANGUAGE plpgsql STABLE STRICT AS $$
 DECLARE
+    view_data doom.world_view;
+    fragments doom.stroke[];
+    far_scale float8;
     queue doom.aperture[]:=ARRAY[ROW(body.sector,0,159,-1,0,0)::doom.aperture];
     tail int:=1;
     win doom.aperture;
@@ -147,11 +166,12 @@ DECLARE
     back doom.room;
     top_clip int[]:=array_fill(0,ARRAY[160],ARRAY[0]);
     bottom_clip int[]:=array_fill(100,ARRAY[160],ARRAY[0]);
-    open_bits bit(160):=repeat('1',160)::bit(160);
     eye float8:=body.z+41;
     inverse float8; depth float8; scale float8; dv float8; u float8;
     top_y int; bottom_y int; top_open int; bottom_open int;
-    open_from int; low_z float8; high_z float8; origin_z float8; texture_h int;
+    clear_portal boolean;
+    solid_anchor float8; upper_anchor float8; lower_anchor float8; middle_anchor float8;
+    open_from int; low_z float8; high_z float8; origin_z float8;
     y0 int; y1 int;
 BEGIN
     SELECT c.rooms INTO STRICT rooms FROM doom.room_catalog c WHERE c.level=p;
@@ -166,7 +186,6 @@ BEGIN
     END LOOP;
     WHILE tail>0 LOOP
         win:=queue[tail]; tail:=tail-1;
-        CONTINUE WHEN position(B'1' IN substring(open_bits FROM win.lo+1 FOR win.hi-win.lo+1))=0;
         edges:=NULL;
         IF win.entry=-1 THEN
             SELECT b.edges INTO edges FROM doom.view_cache v JOIN doom.view_edges b USING(game)
@@ -178,52 +197,61 @@ BEGIN
         front:=rooms[1+win.sector];
         FOR wall IN SELECT * FROM doom.visible(edges,win,body.pos,fx,fy) LOOP
             e:=wall.wall; back:=rooms[1+e.dest]; open_from:=NULL;
+            -- Root windows are untouched. A portal that emitted nothing and
+            -- retained the whole screen has the same clip bounds as the root.
+            IF e.dest IS NULL AND e.mid_id IS NOT NULL AND (win.entry=-1 OR
+                (win.lo=0 AND win.hi=159 AND fragments IS NULL AND view_data.runs IS NULL)) THEN
+                far_scale:=80*least(wall.inv0+wall.lo*wall.inv_step,wall.inv0+wall.hi*wall.inv_step);
+                IF far_scale>0 AND 49.5+(eye-front.z_ceil)*far_scale<=0 AND
+                    49.5+(eye-front.z_floor)*far_scale>99 THEN
+                    origin_z:=CASE WHEN (e.flags&16)=0 THEN front.z_ceil ELSE front.z_floor+coalesce(e.mid_h,0) END;
+                    view_data.runs:=array_append(view_data.runs,(wall,e.v+origin_z-eye,front.light)::doom.wall_run);
+                    CONTINUE;
+                END IF;
+            END IF;
             low_z:=greatest(front.z_floor,back.z_floor); high_z:=least(front.z_ceil,back.z_ceil);
+            clear_portal:=e.dest IS NOT NULL AND e.mid_id IS NULL AND low_z=front.z_floor AND
+                (high_z=front.z_ceil OR (front.sky AND back.sky AND low_z<high_z));
+            solid_anchor:=e.v+CASE WHEN (e.flags&16)=0 THEN front.z_ceil ELSE front.z_floor+coalesce(e.mid_h,0) END-eye;
+            upper_anchor:=e.v+CASE WHEN (e.flags&8)=0 THEN back.z_ceil+coalesce(e.upper_h,0) ELSE front.z_ceil END-eye;
+            lower_anchor:=e.v+CASE WHEN (e.flags&16)<>0 THEN front.z_ceil ELSE back.z_floor END-eye;
+            middle_anchor:=e.v+CASE WHEN (e.flags&16)=0 THEN high_z ELSE low_z+e.mid_h END-eye;
+            -- Sibling apertures partition x. Only open columns enter a child,
+            -- so no pending window can revisit a column closed by this wall.
             FOR x IN wall.lo..wall.hi LOOP
                 y0:=top_clip[x]; y1:=bottom_clip[x];
-                IF y0<y1 THEN
-                    inverse:=wall.inv0+x*wall.inv_step; depth:=1/inverse; scale:=80*inverse; dv:=depth/80;
-                    u:=e.u+e.len*greatest(0,least(1,((x-79.5)/80*wall.z0-wall.r0)/(inverse*wall.k)));
-                    top_y:=greatest(y0,least(y1,ceil(49.5+(eye-front.z_ceil)*scale)))::int;
-                    bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)))::int;
-                    IF y0<top_y THEN
-                        IF front.sky THEN RETURN NEXT (x,y0,top_y,2,front.ceil_id,
-                            (body.yaw-sky_angles[1+x])*512/pi(),y0,1,depth,255)::doom.stroke;
-                        ELSE RETURN NEXT (x,y0,top_y,0,front.ceil_id,0,front.z_ceil,0,depth,front.light)::doom.stroke; END IF;
+                inverse:=wall.inv0+x*wall.inv_step; depth:=1/inverse; scale:=80*inverse; dv:=depth/80;
+                IF NOT clear_portal THEN
+                    u:=e.u+e.len*greatest(0,least(1,((x-79.5::float8)/80*wall.z0-wall.r0)/(inverse*wall.k)));
+                END IF;
+                top_y:=greatest(y0,least(y1,ceil(49.5+(eye-front.z_ceil)*scale)))::int;
+                bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)))::int;
+                IF y0<top_y THEN
+                    IF front.sky THEN fragments:=array_append(fragments,(x,y0,top_y,2,front.ceil_id,
+                        (body.yaw-sky_angles[1+x])*512/pi(),y0,1,depth,255)::doom.stroke);
+                    ELSE fragments:=array_append(fragments,(x,y0,top_y,0,front.ceil_id,0,front.z_ceil,0,depth,front.light)::doom.stroke); END IF;
+                END IF;
+                IF bottom_y<y1 THEN fragments:=array_append(fragments,(x,bottom_y,y1,0,front.floor_id,0,front.z_floor,0,depth,front.light)::doom.stroke); END IF;
+                IF e.dest IS NULL THEN
+                    IF top_y<bottom_y THEN
+                        fragments:=array_append(fragments,(x,top_y,bottom_y,1,e.mid_id,u,solid_anchor+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke);
                     END IF;
-                    IF bottom_y<y1 THEN RETURN NEXT (x,bottom_y,y1,0,front.floor_id,0,front.z_floor,0,depth,front.light)::doom.stroke; END IF;
-                    IF e.dest IS NULL THEN
-                        IF top_y<bottom_y THEN
-                            origin_z:=front.z_ceil;
-                            IF (e.flags&16)<>0 THEN
-                                texture_h:=e.mid_h;
-                                origin_z:=front.z_floor+coalesce(texture_h,0);
-                            END IF;
-                            RETURN NEXT (x,top_y,bottom_y,1,e.mid_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
-                        END IF;
-                        top_clip[x]:=100; open_bits:=set_bit(open_bits,x,0);
-                    ELSE
-                        bottom_open:=greatest(top_y,least(bottom_y,ceil(49.5+(eye-low_z)*scale)))::int;
-                        top_open:=CASE WHEN front.sky AND back.sky AND low_z<high_z THEN top_y ELSE
-                            greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)))::int END;
-                        IF top_y<top_open THEN
-                            origin_z:=front.z_ceil;
-                            IF (e.flags&8)=0 THEN texture_h:=e.upper_h;
-                                origin_z:=back.z_ceil+coalesce(texture_h,0); END IF;
-                            RETURN NEXT (x,top_y,top_open,1,e.upper_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
-                        END IF;
-                        IF bottom_open<bottom_y THEN
-                            origin_z:=CASE WHEN (e.flags&16)<>0 THEN front.z_ceil ELSE back.z_floor END;
-                            RETURN NEXT (x,bottom_open,bottom_y,1,e.lower_id,u,e.v+origin_z-eye+(bottom_open-49.5)*dv,dv,depth,front.light)::doom.stroke;
-                        END IF;
-                        IF e.mid_id IS NOT NULL AND top_open<bottom_open THEN
-                            origin_z:=high_z;
-                            IF (e.flags&16)<>0 THEN texture_h:=e.mid_h; origin_z:=low_z+texture_h; END IF;
-                            RETURN NEXT (x,top_open,bottom_open,3,e.mid_id,u,e.v+origin_z-eye+(top_open-49.5)*dv,dv,depth,front.light)::doom.stroke;
-                        END IF;
-                        top_clip[x]:=top_open; bottom_clip[x]:=bottom_open;
-                        IF top_open=bottom_open THEN open_bits:=set_bit(open_bits,x,0); END IF;
+                ELSIF clear_portal THEN
+                    top_clip[x]:=top_y; bottom_clip[x]:=bottom_y;
+                ELSE
+                    bottom_open:=greatest(top_y,least(bottom_y,ceil(49.5+(eye-low_z)*scale)))::int;
+                    top_open:=CASE WHEN front.sky AND back.sky AND low_z<high_z THEN top_y ELSE
+                        greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)))::int END;
+                    IF top_y<top_open THEN
+                        fragments:=array_append(fragments,(x,top_y,top_open,1,e.upper_id,u,upper_anchor+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke);
                     END IF;
+                    IF bottom_open<bottom_y THEN
+                        fragments:=array_append(fragments,(x,bottom_open,bottom_y,1,e.lower_id,u,lower_anchor+(bottom_open-49.5)*dv,dv,depth,front.light)::doom.stroke);
+                    END IF;
+                    IF e.mid_id IS NOT NULL AND top_open<bottom_open THEN
+                        fragments:=array_append(fragments,(x,top_open,bottom_open,3,e.mid_id,u,middle_anchor+(top_open-49.5)*dv,dv,depth,front.light)::doom.stroke);
+                    END IF;
+                    top_clip[x]:=top_open; bottom_clip[x]:=bottom_open;
                 END IF;
                 IF e.dest IS NOT NULL AND top_clip[x]<bottom_clip[x] THEN open_from:=coalesce(open_from,x); END IF;
                 IF open_from IS NOT NULL AND (x=wall.hi OR top_clip[x]>=bottom_clip[x]) THEN
@@ -235,5 +263,14 @@ BEGIN
             END LOOP;
         END LOOP;
     END LOOP;
+    view_data.strokes:=fragments;
+    RETURN view_data;
 END;
+$$;
+
+CREATE FUNCTION doom.world_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8)
+RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
+    WITH world AS MATERIALIZED (SELECT doom.project_world(p,g,body,fx,fy) AS v)
+    SELECT s.* FROM world,unnest((v).strokes)s
+    UNION ALL SELECT r.* FROM world,doom.wall_rays((v).runs)r;
 $$;

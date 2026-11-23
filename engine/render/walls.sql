@@ -82,16 +82,21 @@ BEGIN
         RETURN substring(colors FROM col+j+1 FOR h-j)||substring(colors FROM col+1 FOR n-(h-j));
     END IF;
     IF floor(v+(n-1)*dv)=row0 THEN RETURN decode(repeat(encode(substring(colors FROM col+j+1 FOR 1),'hex'),n),'hex'); END IF;
-    result:=decode(repeat('00',n),'hex');
+    result:=''::bytea;
     IF (h&(h-1))=0 THEN
         WHILE at_i+8<=n LOOP
-            result:=overlay(result PLACING doom.gather8(colors,col,h-1,v,dv,at_i) FROM at_i+1 FOR 8);
+            result:=result||doom.gather8(colors,col,h-1,v,dv,at_i);
             at_i:=at_i+8;
         END LOOP;
-        FOR i IN at_i..n-1 LOOP
-            result:=set_byte(result,i,get_byte(colors,col+(floor(v+i*dv)::int & (h-1))));
-        END LOOP;
+        IF at_i<n AND n>=8 THEN
+            result:=result||substring(doom.gather8(colors,col,h-1,v,dv,n-8) FROM 9-(n-at_i));
+        ELSE
+            FOR i IN at_i..n-1 LOOP
+                result:=result||substring(colors FROM 1+col+(floor(v+i*dv)::int & (h-1)) FOR 1);
+            END LOOP;
+        END IF;
     ELSE
+        result:=decode(repeat('00',n),'hex');
         FOR i IN 0..n-1 LOOP
             row_i:=floor(v+i*dv)::int;
             result:=set_byte(result,i,get_byte(colors,col+(row_i%h+h)%h));
@@ -99,4 +104,13 @@ BEGIN
     END IF;
     RETURN result;
 END;
+$$;
+
+-- First sampled row at or beyond a post boundary. Check the forward expression
+-- at the estimate so division cannot move an exact texel boundary by one pixel.
+CREATE FUNCTION doom.post_row(edge int,v float8,dv float8,n int) RETURNS int
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    SELECT CASE WHEN i>0 AND v+(i-1)*dv>=edge THEN i-1
+                WHEN i<n AND v+i*dv<edge THEN i+1 ELSE i END
+    FROM (SELECT greatest(0,least(n,ceil((edge-v)/dv)))::int AS i) q;
 $$;

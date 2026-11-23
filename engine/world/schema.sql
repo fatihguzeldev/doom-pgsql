@@ -23,6 +23,32 @@ CREATE FUNCTION doom.wall_quads(data bytea,w int,h int) RETURNS bytea LANGUAGE s
         '(..)(..)(..)','\1\1\1\1\2\2\2\1\2\2\3\1\1\2\3\3','g'),'hex')
     FROM padded,generate_series(1,h)y;
 $$;
+-- Ordinals are zero-based in the texture, one-based in the SQL arrays.
+CREATE FUNCTION doom.wall_column_ids(pixels bytea,mask bytea,w int,h int) RETURNS int[]
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    WITH ids AS (
+        SELECT x,min(x) OVER (PARTITION BY substring(pixels FROM 1+x*h FOR h),
+            substring(mask FROM 1+x*h FOR h)) AS id FROM generate_series(0,w-1)x
+    )
+    SELECT CASE WHEN bool_or(x<>id) THEN array_agg(id ORDER BY x) END FROM ids;
+$$;
+
+CREATE TYPE doom.sprite_posts AS (offsets int[],runs int4range[]);
+CREATE FUNCTION doom.sprite_posts(mask bytea,w int,h int) RETURNS doom.sprite_posts
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    WITH runs AS MATERIALIZED (
+        SELECT x,int4range(min(y),max(y)+1) AS span FROM (
+            SELECT x,y,y-row_number() OVER (PARTITION BY x ORDER BY y) AS group_id
+            FROM generate_series(0,w-1)x,generate_series(0,h-1)y WHERE get_byte(mask,x*h+y)<>0
+        ) opaque GROUP BY x,group_id
+    ), offsets AS (
+        SELECT x,1+sum(count(span)) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS stop
+        FROM generate_series(0,w-1)x LEFT JOIN runs USING(x) GROUP BY x
+    )
+    SELECT ARRAY[1]||ARRAY(SELECT stop::int FROM offsets ORDER BY x),
+        ARRAY(SELECT span FROM runs ORDER BY x,span);
+$$;
+
 CREATE TABLE doom.art (
     id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     level bigint NOT NULL REFERENCES doom.levels ON DELETE CASCADE,
@@ -36,6 +62,8 @@ CREATE TABLE doom.art (
     quads bytea GENERATED ALWAYS AS (CASE WHEN kind='wall' AND (h&(h-1))=0 AND w::bigint*h<=65536
         THEN doom.wall_quads(pixels,w,h) END) STORED,
     mask bytea CHECK (length(mask)=length(pixels)),
+    column_ids int[] GENERATED ALWAYS AS (CASE WHEN kind='wall' THEN doom.wall_column_ids(pixels,mask,w,h) END) STORED,
+    posts doom.sprite_posts GENERATED ALWAYS AS (CASE WHEN kind='sprite' THEN doom.sprite_posts(mask,w,h) END) STORED,
     UNIQUE(level,kind,name)
 );
 
