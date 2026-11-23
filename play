@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -e
+
+repo=$(cd "$(dirname "$0")" && pwd)
+compose=(docker compose -f "$repo/compose.yaml")
+args=()
+use_db=true
+while (( $# )); do
+    case "$1" in
+        --wad|--wad=*)
+            if [[ $1 == --wad ]]; then
+                shift
+                wad=$1
+            else
+                wad=${1#--wad=}
+            fi
+            if [[ ! -f $wad ]]; then
+                echo "WAD file not found: $wad" >&2
+                exit 2
+            fi
+            [[ $wad == /* ]] || wad="$PWD/$wad"
+            export DOOM_WAD_PATH="$wad"
+            args+=(--wad /app/assets/doom1.wad)
+            ;;
+        --dsn|--dsn=*|--help|-h)
+            use_db=false
+            args+=("$1")
+            ;;
+        *) args+=("$1") ;;
+    esac
+    shift
+done
+
+if [[ $use_db == true ]]; then
+    "${compose[@]}" up -d --wait db
+    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -U postgres -d doom <<'SQL'
+\o /dev/null
+SELECT pg_advisory_lock(hashtext('doom.install'));
+SELECT to_regnamespace('doom') IS NULL AS install \gset
+\if :install
+\i /app/install.sql
+\endif
+SQL
+fi
+exec "${compose[@]}" run --rm play "${args[@]}"
