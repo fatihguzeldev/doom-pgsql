@@ -46,7 +46,9 @@ LANGUAGE plpgsql STABLE AS $$
 DECLARE
     f record;
 BEGIN
-    SELECT * INTO STRICT f FROM doom.poll_frame(gid,generation,slot,CASE WHEN cardinality(known)=20 THEN previous END);
+    IF cardinality(known) IS DISTINCT FROM 20 OR array_lower(known,1)<>1 THEN known:=NULL; END IF;
+    SELECT * INTO STRICT f FROM doom.poll_frame(gid,generation,slot,CASE WHEN known IS NOT NULL
+        AND array_position(known,NULL) IS NULL THEN previous END);
     epoch:=f.epoch; tic:=f.tic; frame_slot:=f.frame_slot; width:=f.width; height:=f.height;
     token:=f.token; palette_revision:=f.palette_revision; camera_x:=f.camera_x; camera_y:=f.camera_y;
     camera_z:=f.camera_z; yaw:=f.yaw; finished:=f.finished;

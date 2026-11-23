@@ -40,7 +40,7 @@ BEGIN
     SELECT * INTO packet FROM doom.poll_tiles(g,1,2,key,known);
     ASSERT packet.pixels IS NULL AND packet.tiles='{}'::int[];
     known[2]:=NULL;
-    SELECT * INTO packet FROM doom.poll_tiles(g,1,2,NULL,known);
+    SELECT * INTO packet FROM doom.poll_tiles(g,1,2,key,known);
     ASSERT packet.tiles=ARRAY[1] AND packet.pixels=substring(pic FROM 801 FOR 800);
     ASSERT length(pic)=16000;
     ASSERT get_byte(pic,8050)=55 AND get_byte(pic,8051)=49,'masked sprite must show both the far wall and its opaque texel';
