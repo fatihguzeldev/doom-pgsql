@@ -61,6 +61,11 @@ FROM pg_proc WHERE oid='doom.compile_level(bigint)'::regprocedure \gset
 \if :upgrade_mesh
 ALTER FUNCTION doom.compile_level(bigint) SET plan_cache_mode=force_generic_plan;
 \endif
+SELECT prosqlbody IS NULL AS upgrade_palette
+FROM pg_proc WHERE oid='doom.frame_palette(bigint)'::regprocedure \gset
+\if :upgrade_palette
+\i /app/engine/render/palette.sql
+\endif
 \endif
 SQL
 else

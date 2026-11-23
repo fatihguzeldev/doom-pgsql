@@ -13,6 +13,7 @@ DECLARE
     packet record;
     known text[];
     reference bytea;
+    palette_version bigint;
 BEGIN
     SELECT decode(string_agg(lpad(to_hex(i),2,'0'),'' ORDER BY i),'hex') INTO lighting FROM generate_series(0,255)i;
     INSERT INTO doom.levels(name,palette,lighting,sector_count)
@@ -116,6 +117,13 @@ BEGIN
     UPDATE doom.lines SET special=11 WHERE level=p AND id=1;
     PERFORM doom.tick(g,1,37,0,0,0,true,false);
     ASSERT (SELECT finished FROM doom.game_status(g)) AND doom.tick(g,1,38,1,0,0,false,false)=37;
+
+    reference:=lighting||lighting||lighting;
+    UPDATE doom.levels SET palette=reference WHERE id=p RETURNING revision INTO palette_version;
+    ASSERT doom.frame_palette(g,palette_version)=reference;
+    UPDATE doom.levels l SET lighting=decode(repeat(encode(l.lighting,'hex'),33),'hex') WHERE id=p;
+    ASSERT doom.frame_palette(g,palette_version) IS NULL;
+    ASSERT doom.frame_palette(g)=decode(repeat(encode(reference,'hex'),32),'hex');
 END;
 $$;
 ROLLBACK;

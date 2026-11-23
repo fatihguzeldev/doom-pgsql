@@ -372,10 +372,5 @@ LANGUAGE sql STABLE AS $$
     SELECT r.epoch,r.tic,r.frame_slot,r.width,r.height,r.pixels,r.shades FROM doom.raster(gid,generation,slot,false)r;
 $$;
 
-CREATE FUNCTION doom.frame_palette(gid bigint) RETURNS bytea LANGUAGE sql STABLE STRICT AS $$
-    SELECT string_agg(substring(l.palette FROM 1+3*get_byte(l.lighting,i) FOR 3),''::bytea ORDER BY i)
-    FROM doom.games g JOIN doom.levels l ON l.id=g.level,
-        LATERAL generate_series(0,least(length(l.lighting),32*256)-1)i WHERE g.id=gid;
-$$;
 COMMENT ON FUNCTION doom.frame(bigint,bigint,bigint) IS
 'Column-major 8-bit pixels and shades. At (x,y), i=x*height+y. RGB starts at 3*(256*shades[i]+pixels[i]) in frame_palette(game).';
