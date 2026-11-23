@@ -68,7 +68,7 @@ RETURN int8send(
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+6]))::bigint << 8)
     | (get_byte(data,doom.flat_index(px,py,dx,dy,depths[i+7]))::bigint << 0));
 
-CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea);
+CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea,stretched bytea);
 CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
 RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
     WITH projected AS (
@@ -78,6 +78,8 @@ RETURNS SETOF doom.stroke LANGUAGE sql STABLE STRICT AS $$
             (a.pos[0]-body.pos[0])*fx+(a.pos[1]-body.pos[1])*fy AS depth,
             (a.pos[0]-body.pos[0])*fy-(a.pos[1]-body.pos[1])*fx AS rightward
         FROM doom.actors a JOIN doom.art im ON im.id=a.art JOIN doom.sectors s ON s.level=p AND s.id=a.sector
+        JOIN doom.mesh am ON am.level=p AND am.sector=a.sector
+        JOIN doom.mesh camera_room ON camera_room.level=p AND camera_room.sector=body.sector AND camera_room.component=am.component
         LEFT JOIN doom.movers m ON m.game=g AND m.sector=a.sector
         WHERE a.game=g AND a.id<>-1 AND a.health>0
     ), screen AS (
@@ -167,9 +169,9 @@ BEGIN
     -- Read and detoast only the textures actually present in this view.
     SELECT min(art) INTO first_art FROM unnest(strokes);
     SELECT array_agg(CASE WHEN a.id IS NOT NULL THEN ROW(a.w,a.h,substring(a.pixels FROM 1),
-        substring(a.mask FROM 1))::doom.tile END ORDER BY id_range) INTO bank
+        substring(a.mask FROM 1),CASE WHEN used.stretch THEN substring(a.stretched FROM 1) END)::doom.tile END ORDER BY id_range) INTO bank
     FROM generate_series(first_art,(SELECT max(art) FROM unnest(strokes)))id_range
-    LEFT JOIN (SELECT DISTINCT art FROM unnest(strokes)) used ON used.art=id_range
+    LEFT JOIN (SELECT art,bool_or(kind=1 AND dv BETWEEN 0.46 AND 0.54) AS stretch FROM unnest(strokes) GROUP BY art) used ON used.art=id_range
     LEFT JOIN doom.art a ON a.id=used.art;
     SELECT array_agg(decode(repeat(lpad(to_hex(i),2,'0'),100),'hex') ORDER BY i) INTO shade_run FROM generate_series(0,bands)i;
     SELECT array_agg(x) INTO overlay_columns FROM (SELECT DISTINCT x FROM unnest(strokes) WHERE kind>=3) overlay_cols;
@@ -204,7 +206,11 @@ BEGIN
         ELSE
             IF stroke.kind>=3 AND NOT (stroke.depth < ANY(zbuffer[stroke.y0:stroke.y1-1])) THEN CONTINUE; END IF;
             band:=CASE WHEN stroke.kind=2 THEN 0 ELSE least(bands,level_light+floor(stroke.depth/96)::int) END;
-            sample:=coalesce(doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n),substring(empty_column FOR n));
+            IF tex.stretched IS NOT NULL AND stroke.kind=1 AND stroke.dv BETWEEN 0.46 AND 0.54 THEN
+                sample:=doom.column_samples(tex.stretched,tex.w,tex.h*2,stroke.u,2*stroke.v,2*stroke.dv,n);
+            ELSE
+                sample:=coalesce(doom.column_samples(tex.pixels,tex.w,tex.h,stroke.u,stroke.v,stroke.dv,n),substring(empty_column FOR n));
+            END IF;
             IF stroke.kind<3 THEN
                 column_data:=overlay(column_data PLACING sample FROM stroke.y0+1 FOR n);
                 column_light:=overlay(column_light PLACING substring(shade_run[band+1] FOR n) FROM stroke.y0+1 FOR n);

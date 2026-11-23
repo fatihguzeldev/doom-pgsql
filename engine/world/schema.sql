@@ -18,6 +18,8 @@ CREATE TABLE doom.art (
     w int NOT NULL CHECK (w>0), h int NOT NULL CHECK (h>0),
     origin_x int NOT NULL DEFAULT 0, origin_y int NOT NULL DEFAULT 0,
     pixels bytea NOT NULL CHECK (length(pixels)=w::bigint*h),
+    stretched bytea GENERATED ALWAYS AS (CASE WHEN kind='wall' THEN
+        decode(regexp_replace(encode(pixels,'hex'),'(..)','\1\1','g'),'hex') END) STORED,
     mask bytea CHECK (length(mask)=length(pixels)),
     UNIQUE(level,kind,name)
 );
