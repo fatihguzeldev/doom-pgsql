@@ -10,13 +10,14 @@ export DOOM_PLAY_VARIANT=
 build=()
 sound=true
 while (( $# )); do
-    case "$1" in
+    arg=$1
+    case "$arg" in
         --wad|--wad=*)
-            if [[ $1 == --wad ]]; then
+            if [[ $arg == --wad ]]; then
                 shift
                 wad=$1
             else
-                wad=${1#--wad=}
+                wad=${arg#--wad=}
             fi
             if [[ ! -f $wad ]]; then
                 echo "WAD file not found: $wad" >&2
@@ -24,29 +25,19 @@ while (( $# )); do
             fi
             [[ $wad == /* ]] || wad="$PWD/$wad"
             export DOOM_WAD_PATH="$wad"
-            args+=(--wad /app/assets/doom1.wad)
+            args+=(--wad)
+            arg=/app/assets/doom1.wad
             ;;
-        --help|-h)
-            sound=false
-            use_db=false
-            args+=("$1")
-            ;;
-        --mute)
-            sound=false
-            args+=("$1")
-            ;;
+        --help|-h) sound=false; use_db=false ;;
+        --mute) sound=false ;;
+        --dsn|--dsn=*) use_db=false ;;
         --rife)
             rife=true
             export DOOM_PLAY_VARIANT=-rife
             build=(--build)
-            args+=("$1")
             ;;
-        --dsn|--dsn=*)
-            use_db=false
-            args+=("$1")
-            ;;
-        *) args+=("$1") ;;
     esac
+    args+=("$arg")
     shift
 done
 
@@ -57,7 +48,7 @@ else
     compose=(docker compose -f "$repo/compose.services.yaml")
 fi
 
-# Docker Desktop cannot play PCM on the host's speakers.
+# the container cannot access the host's audio device
 if [[ $sound == true && -t 0 && -t 1 ]]; then
     for player in afplay paplay aplay; do
         command -v "$player" >/dev/null || continue
