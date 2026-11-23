@@ -191,17 +191,18 @@ class Art:
         for x in (90, 221):
             yield "STTPRCNT", x, 171
 
-    def compose(self, world, *, health, armor, ammo, keys=0, shot_age=None):
+    def compose(self, world, *, health, armor, ammo, keys=0, shot_age=None, status_bar=True):
         w, h = world.width, world.height
-        if not self.has_status_bar and "PISGA0" not in self._images:
+        show_bar = self.has_status_bar and status_bar
+        if not show_bar and "PISGA0" not in self._images:
             return world
-        view_h = 168 if self.has_status_bar else 200
+        view_h = 168 if show_bar else 200
         bottom = (h * view_h + 199) // 200
         gun, flash = "PISGA0", False
         if shot_age is not None and 0 <= shot_age < 8:
             gun = "PISGC0" if 3 <= shot_age < 6 else "PISGB0"
             flash = shot_age < 3
-        key = w, h, health, armor, ammo, keys, gun, flash
+        key = w, h, show_bar, health, armor, ammo, keys, gun, flash
         if key != self._overlay_key:
             runs = []
             if health > 0:
@@ -212,7 +213,7 @@ class Art:
                     runs.extend(_opaque_runs(weapon, 0, origin, w, h, bottom))
                 if flash and "PISFA0" in self._images:
                     runs.extend(_opaque_runs(self._images["PISFA0"], 0, origin, w, h, bottom))
-            if self.has_status_bar:
+            if show_bar:
                 for name, x, y in self._hud(health, armor, ammo, keys):
                     if name in self._images:
                         runs.extend(_opaque_runs(self._images[name], x, y, w, h, h))

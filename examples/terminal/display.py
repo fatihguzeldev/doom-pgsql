@@ -298,11 +298,17 @@ class Display:
             image = _reproject(self._world, turn)
             if self.art is not None:
                 image = self.art.compose(
-                    image, health=health, armor=armor, ammo=ammo, keys=keys, shot_age=shot_tic
+                    image, health=health, armor=armor, ammo=ammo, keys=keys, shot_age=shot_tic,
+                    status_bar=self._full_status_bar(world, cols, rows),
                 )
             self._rendered = _image_rows(image, cols, rows)
             self._render_key = key
         return self._rendered
+
+    def _full_status_bar(self, world, cols, rows):
+        # Half-block cells provide one pixel across and two pixels down.
+        return (self.art is not None and self.art.has_status_bar
+                and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200)
 
     def paint(
         self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset()
@@ -343,7 +349,8 @@ class Display:
         ]
         if keys:
             hud += "   KEYS " + "/".join(keys)
-        page.centered(below, hud, GOLD)
+        if not self._full_status_bar(world, cols, rows):
+            page.centered(below, hud, GOLD)
         below += 1
         if page.height >= 28:
             below += 1
