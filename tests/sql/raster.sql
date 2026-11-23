@@ -14,3 +14,38 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+DO $$
+DECLARE
+    data bytea;
+    atlas bytea;
+    cuts float8[];
+    offsets smallint[];
+    step float8;
+    v float8;
+    sample bytea;
+    rows bytea[];
+    cols bytea[];
+BEGIN
+    SELECT decode(string_agg(lpad(to_hex(i),2,'0'),'' ORDER BY i),'hex') INTO data FROM generate_series(0,127)i;
+    atlas:=doom.wall_quads(data,2,64);
+    SELECT w.cuts,w.quads INTO cuts,offsets FROM doom.wall_scales w;
+    FOR bucket IN 1..cardinality(offsets)/25 LOOP
+        step:=(cuts[bucket]+cuts[bucket+1])/2;
+        v:=-11-49.5*step;
+        sample:=doom.wall_strip(atlas,16*64,16*((-11)&63),16*64-1,offsets,1+(bucket-1)*25);
+        FOR y IN 0..99 LOOP
+            ASSERT get_byte(sample,y)=get_byte(data,64+(floor(v+y*step)::int & 63)), 'wrong wall tap or wrap';
+        END LOOP;
+    END LOOP;
+    SELECT array_agg(row_bytes ORDER BY y) INTO rows
+    FROM (SELECT y,decode(string_agg(lpad(to_hex((13*x+7*y)&255),2,'0'),'' ORDER BY x),'hex') AS row_bytes
+          FROM generate_series(0,159)x,generate_series(0,99)y GROUP BY y) r;
+    cols:=doom.plane_columns(rows);
+    FOR x IN 0..159 LOOP
+        FOR y IN 0..99 LOOP
+            ASSERT get_byte(cols[x+1],y)=get_byte(rows[y+1],x),'scanline transpose changed pixel position';
+        END LOOP;
+    END LOOP;
+END;
+$$;

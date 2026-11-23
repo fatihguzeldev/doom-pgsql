@@ -11,6 +11,18 @@ CREATE TABLE doom.levels (
 );
 
 CREATE TYPE doom.surface AS ENUM ('wall','flat','sprite');
+-- Every four samples at a step below 2/3 draw at most three consecutive
+-- texels. This 16-byte word contains every possible four-sample substring.
+CREATE FUNCTION doom.wall_quads(data bytea,w int,h int) RETURNS bytea LANGUAGE sql IMMUTABLE STRICT AS $$
+    WITH cols AS MATERIALIZED (
+        SELECT x,substring(data FROM 1+x*h FOR h) AS col FROM generate_series(0,w-1)x
+    ), padded AS MATERIALIZED (
+        SELECT x,col||substring(col||col FOR 2) AS col FROM cols
+    )
+    SELECT decode(regexp_replace(encode(string_agg(substring(col FROM y FOR 3),''::bytea ORDER BY x,y),'hex'),
+        '(..)(..)(..)','\1\1\1\1\2\2\2\1\2\2\3\1\1\2\3\3','g'),'hex')
+    FROM padded,generate_series(1,h)y;
+$$;
 CREATE TABLE doom.art (
     id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     level bigint NOT NULL REFERENCES doom.levels ON DELETE CASCADE,
@@ -21,9 +33,14 @@ CREATE TABLE doom.art (
     pixels bytea NOT NULL CHECK (length(pixels)=w::bigint*h),
     stretched bytea GENERATED ALWAYS AS (CASE WHEN kind='wall' THEN
         decode(regexp_replace(encode(pixels,'hex'),'(..)','\1\1','g'),'hex') END) STORED,
+    quads bytea GENERATED ALWAYS AS (CASE WHEN kind='wall' AND (h&(h-1))=0 AND w::bigint*h<=65536
+        THEN doom.wall_quads(pixels,w,h) END) STORED,
     mask bytea CHECK (length(mask)=length(pixels)),
     UNIQUE(level,kind,name)
 );
+
+-- Read only the visible columns of the compiled wall texture.
+ALTER TABLE doom.art ALTER COLUMN quads SET STORAGE EXTERNAL;
 
 CREATE TABLE doom.sectors (
     level bigint REFERENCES doom.levels ON DELETE CASCADE, id int CHECK(id BETWEEN 0 AND 65535),
