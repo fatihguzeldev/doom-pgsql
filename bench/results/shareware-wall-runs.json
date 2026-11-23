@@ -1,0 +1,415 @@
+{
+  "reference_commit": "49af1238d9b8c3432ae42f23d17387f75ca75d84",
+  "engine_sha256": "f098c12c4802743d30bd42d61f496bf5810c3eacd2be44508131f31769d7c3f3",
+  "postgresql": "PostgreSQL 17.12 (Debian 17.12-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "environment": {
+    "cpu_quota_us": 6250,
+    "cpu_period_us": 100000,
+    "cpu_burst_us": 0,
+    "memory_bytes": 536870912,
+    "swap_bytes": 0,
+    "simulated_rtt_ms": 50,
+    "native_dimensions": [
+      160,
+      100
+    ],
+    "iwad_md5": "f0cefca49926d00903cf57551d901abe"
+  },
+  "method": "Local Docker PostgreSQL 17. Each trial started in a fresh database containing E1M1 and E1M3 with statistics collected after import. Trials 1 through 3 cloned analyzed templates. E1M3 pair 4 used separate freshly installed databases in a second, dedicated container. Ran bench/replay.py sequentially, E1M3 for 60 seconds at skill 3, then E1M1 to its exit at skill 1. The reader counted distinct SQL pixel/shade pairs before the deadline while the writer committed live input. Summary rates pool total counts over total elapsed time.",
+  "trial_order": [
+    "old1",
+    "new1",
+    "new2",
+    "old2",
+    "new3",
+    "old3",
+    "new4 (E1M3 only)",
+    "old4 (E1M3 only)"
+  ],
+  "trials": {
+    "E1M3": {
+      "reference": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1381.966,
+            "reader": 1915.073
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 881,
+          "tics_per_s": 14.683333333333334,
+          "sql_frames": 175,
+          "unique_images": 165,
+          "unique_fps": 2.75,
+          "reused": 28,
+          "median_frame_request_ms": 203.24141718447208,
+          "median_input_batch_ms": 952.3552088066936
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1259.203,
+            "reader": 1961.632
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 1041,
+          "tics_per_s": 17.35,
+          "sql_frames": 210,
+          "unique_images": 194,
+          "unique_fps": 3.2333333333333334,
+          "reused": 17,
+          "median_frame_request_ms": 198.37316684424877,
+          "median_input_batch_ms": 801.676020026207
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1191.606,
+            "reader": 2312.148
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 2041,
+          "tics_per_s": 34.016666666666666,
+          "sql_frames": 551,
+          "unique_images": 504,
+          "unique_fps": 8.4,
+          "reused": 25,
+          "median_frame_request_ms": 62.87050060927868,
+          "median_input_batch_ms": 59.99337462708354
+        }
+      ],
+      "candidate": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1199.141,
+            "reader": 2341.917
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 1179,
+          "tics_per_s": 19.65,
+          "sql_frames": 277,
+          "unique_images": 262,
+          "unique_fps": 4.366666666666666,
+          "reused": 21,
+          "median_frame_request_ms": 196.41814567148685,
+          "median_input_batch_ms": 797.6881256327033
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1175.12,
+            "reader": 2204.56
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 1121,
+          "tics_per_s": 18.683333333333334,
+          "sql_frames": 250,
+          "unique_images": 231,
+          "unique_fps": 3.85,
+          "reused": 21,
+          "median_frame_request_ms": 194.44141630083323,
+          "median_input_batch_ms": 704.2172495275736
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1222.322,
+            "reader": 2281.915
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 2084,
+          "tics_per_s": 34.733333333333334,
+          "sql_frames": 455,
+          "unique_images": 431,
+          "unique_fps": 7.183333333333334,
+          "reused": 18,
+          "median_frame_request_ms": 99.86099973320961,
+          "median_input_batch_ms": 99.6591248549521
+        }
+      ]
+    },
+    "E1M1": {
+      "reference": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1531.314,
+            "reader": 2409.109
+          },
+          "seconds": 66.01729241758585,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 10.345774190188703,
+          "sql_frames": 124,
+          "unique_images": 116,
+          "unique_fps": 1.7571153822282422,
+          "reused": 11,
+          "median_frame_request_ms": 407.76962507516146,
+          "median_input_batch_ms": 1551.151041407138
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1827.541,
+            "reader": 2436.69
+          },
+          "seconds": 75.52304195798934,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 9.043597586812346,
+          "sql_frames": 118,
+          "unique_images": 104,
+          "unique_fps": 1.3770631757371656,
+          "reused": 19,
+          "median_frame_request_ms": 492.2847915440798,
+          "median_input_batch_ms": 1694.2687495611608
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 490.988,
+            "reader": 847.44
+          },
+          "seconds": 21.922942916862667,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 31.15457639925937,
+          "sql_frames": 107,
+          "unique_images": 103,
+          "unique_fps": 4.698274332538382,
+          "reused": 4,
+          "median_frame_request_ms": 198.7010408192873,
+          "median_input_batch_ms": 495.1236038468778
+        }
+      ],
+      "candidate": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 803.566,
+            "reader": 1304.538
+          },
+          "seconds": 37.52185804210603,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 18.202723309532153,
+          "sql_frames": 99,
+          "unique_images": 96,
+          "unique_fps": 2.558508693579922,
+          "reused": 5,
+          "median_frame_request_ms": 297.66520857810974,
+          "median_input_batch_ms": 708.550603594631
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1266.803,
+            "reader": 1788.8
+          },
+          "seconds": 54.92313895840198,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 12.435560183792385,
+          "sql_frames": 97,
+          "unique_images": 86,
+          "unique_fps": 1.5658245619416473,
+          "reused": 14,
+          "median_frame_request_ms": 398.26679043471813,
+          "median_input_batch_ms": 1297.1806251443923
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 693.273,
+            "reader": 1165.471
+          },
+          "seconds": 31.388844915665686,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 21.759322518399692,
+          "sql_frames": 94,
+          "unique_images": 91,
+          "unique_fps": 2.8991191056725794,
+          "reused": 3,
+          "median_frame_request_ms": 203.52537464350462,
+          "median_input_batch_ms": 606.2790625728667
+        }
+      ]
+    }
+  },
+  "included_pairs": {
+    "E1M3": [
+      1,
+      2,
+      4
+    ],
+    "E1M1": [
+      1,
+      2,
+      3
+    ]
+  },
+  "summary": {
+    "E1M3": {
+      "reference": {
+        "distinct_fps": 4.794,
+        "tics_per_second": 22.017,
+        "reader_cpu_ms_per_distinct_image_including_drain": 7.171
+      },
+      "candidate": {
+        "distinct_fps": 5.133,
+        "tics_per_second": 24.356,
+        "reader_cpu_ms_per_distinct_image_including_drain": 7.39
+      },
+      "fps_change_percent": 7.1
+    },
+    "E1M1": {
+      "reference": {
+        "distinct_fps": 1.976,
+        "tics_per_second": 12.535,
+        "reader_cpu_ms_per_distinct_image_including_drain": 17.626
+      },
+      "candidate": {
+        "distinct_fps": 2.205,
+        "tics_per_second": 16.546,
+        "reader_cpu_ms_per_distinct_image_including_drain": 15.6
+      },
+      "fps_change_percent": 11.6
+    }
+  },
+  "verification": {
+    "E1M3": {
+      "matching_frames_and_state_snapshots": 1025,
+      "sha256_of_raw_frame_digests": "7e2cf79aeb0ed52c367b1b7d5e829905faf42a1fe4858b92b5b261d14e80e0af",
+      "sha256_of_raw_state_digests": "4b78e073eb65a416ee6c7bee33f784b4565475e959a585f219cb0a8796e2aec6"
+    },
+    "E1M1": {
+      "matching_frames_and_state_snapshots": 684,
+      "sha256_of_raw_frame_digests": "051fcaf773b9186890c9c23e381782bc41a9e5fd0da04154e8d60fc8a69e42cc",
+      "sha256_of_raw_state_digests": "8c13a4a418c6a0806060a000534ae4cc9cf4a09106fe4326d2621d1cc09a33ad"
+    },
+    "all_episode_maps": {
+      "matching_views": 216,
+      "method": "24 moving/turning tics on each of E1M1 through E1M9, comparing pixels and shades across both versions",
+      "sha256_pixels_and_shades": "797c7922ffd309b7454411ea77aa7f61e5d29d499e7e158b7af2a7378c511949"
+    }
+  },
+  "fixed_tic_timings": {
+    "method": "Single full replay on each revision in unthrottled PostgreSQL 17, one synchronous call per tic and one frame per tic. Elapsed milliseconds, excluding state verification.",
+    "E1M3": {
+      "reference": {
+        "ticks_ms": 896.08,
+        "frames_ms": 3595.86
+      },
+      "candidate": {
+        "ticks_ms": 864.32,
+        "frames_ms": 3495.49
+      }
+    },
+    "E1M1": {
+      "reference": {
+        "ticks_ms": 889.96,
+        "frames_ms": 4768.05
+      },
+      "candidate": {
+        "ticks_ms": 809.16,
+        "frames_ms": 5102.38
+      }
+    }
+  },
+  "bsp_experiment": {
+    "postgresql": "15.13 local arm64, without a CPU quota",
+    "method": "On the same intermediate renderer, compared the portal walk with and without a conservative WAD BSP frustum filter. Each linedef was assigned to a leaf and ancestor bounds enclosed its full extent. One full replay per configuration, one frame per tic. Both reproduced all reference images and game states.",
+    "frame_ms": {
+      "E1M3": {
+        "portal": 2612.57,
+        "bsp_prefilter": 2784.04
+      },
+      "E1M1": {
+        "portal": 3842.85,
+        "bsp_prefilter": 4154.86
+      }
+    }
+  },
+  "shared_quota_replay": {
+    "map": "E1M3",
+    "method": "Pair 3 was replaced as a pair, and both original runs are retained here. The candidate E1M3 run overlapped auto-vacuum on the two unrelated databases used for frame verification. The E1M1 trial followed the overlapping vacuums.",
+    "candidate_benchmark_utc": [
+      "2026-11-23T15:21:19.710Z",
+      "2026-11-23T15:22:19.710Z"
+    ],
+    "other_database_toast_autovacuum_completed_utc": [
+      "2026-11-23T15:22:00.191Z",
+      "2026-11-23T15:22:19.090Z"
+    ],
+    "candidate": {
+      "backend_cpu_ms_including_drain": {
+        "writer": 962.898,
+        "reader": 1151.755
+      },
+      "seconds": 60.0,
+      "artificial_rtt_ms": 50,
+      "acknowledged_tics": 657,
+      "tics_per_s": 10.95,
+      "sql_frames": 103,
+      "unique_images": 102,
+      "unique_fps": 1.7,
+      "reused": 13,
+      "median_frame_request_ms": 300.0563117675483,
+      "median_input_batch_ms": 1301.9146248698235
+    },
+    "reference": {
+      "backend_cpu_ms_including_drain": {
+        "writer": 1064.972,
+        "reader": 2136.721
+      },
+      "seconds": 60.0,
+      "artificial_rtt_ms": 50,
+      "acknowledged_tics": 2097,
+      "tics_per_s": 34.95,
+      "sql_frames": 595,
+      "unique_images": 542,
+      "unique_fps": 9.033333333333333,
+      "reused": 27,
+      "median_frame_request_ms": 62.42774939164519,
+      "median_input_batch_ms": 59.30960411205888
+    }
+  },
+  "all_e1m3_pairs": {
+    "reference": {
+      "distinct_fps": 5.854,
+      "tics_per_second": 25.25,
+      "reader_cpu_ms_per_distinct_image_including_drain": 5.926
+    },
+    "candidate": {
+      "distinct_fps": 4.275,
+      "tics_per_second": 21.004,
+      "reader_cpu_ms_per_distinct_image_including_drain": 7.778
+    }
+  },
+  "interleaved_fixed_tics": {
+    "method": "Isolated unthrottled PostgreSQL 17. Both databases were warmed at spawn and then processed exactly the same inputs, one frame per tic. Measurement order alternated reference-first / candidate-first on every tic. Elapsed SQL round-trip milliseconds, summed per route. Every pair of frame buffers matched.",
+    "routes": {
+      "E1M3": {
+        "frames": 1025,
+        "ticks": 1024,
+        "frame_ms": {
+          "reference": 3133.36,
+          "candidate": 2989.63
+        },
+        "tick_ms": {
+          "reference": 764.81,
+          "candidate": 732.45
+        }
+      },
+      "E1M1": {
+        "frames": 684,
+        "ticks": 683,
+        "frame_ms": {
+          "reference": 4149.55,
+          "candidate": 4344.94
+        },
+        "tick_ms": {
+          "reference": 675.8,
+          "candidate": 570.57
+        }
+      }
+    }
+  },
+  "candidate_note": "The first two candidate runs also filtered degenerate linedefs before testing ray intersections. The final candidate uses the zero-denominator check alone, which also preserves very short edited lines. All original shareware linedefs have integral endpoints."
+}
