@@ -1,0 +1,51 @@
+{
+  "engine_commit": "04f97261f29a277f836657952ae49dc29904ab5c",
+  "workload": "bench/ps5.sh with the input sequence from bench/replay.py",
+  "environment": "local Docker, Linux arm64, PostgreSQL 17.12",
+  "cpu_quota_us": 6250,
+  "cpu_period_us": 100000,
+  "cpu_burst_us": 0,
+  "memory_bytes": 536870912,
+  "swap_bytes": 0,
+  "iwad": "DOOM shareware v1.9",
+  "iwad_md5": "f0cefca49926d00903cf57551d901abe",
+  "map": "E1M3",
+  "skill": 3,
+  "width": 160,
+  "height": 100,
+  "unique_fps_definition": "Distinct pairs of SQL-rendered pixel and shade buffers received within the timed window, divided by elapsed seconds.",
+  "runs": [
+    {
+      "backend_cpu_ms_including_drain": {
+        "writer": 1322.488,
+        "reader": 2312.737
+      },
+      "seconds": 60.0,
+      "artificial_rtt_ms": 50,
+      "acknowledged_tics": 1137,
+      "tics_per_s": 18.95,
+      "sql_frames": 221,
+      "unique_images": 214,
+      "unique_fps": 3.566666666666667,
+      "reused": 6,
+      "median_frame_request_ms": 204.48816660791636,
+      "median_input_batch_ms": 204.20237444341183
+    },
+    {
+      "backend_cpu_ms_including_drain": {
+        "writer": 1268.359,
+        "reader": 2357.771
+      },
+      "seconds": 60.0,
+      "artificial_rtt_ms": 50,
+      "acknowledged_tics": 860,
+      "tics_per_s": 14.333333333333334,
+      "sql_frames": 182,
+      "unique_images": 176,
+      "unique_fps": 2.933333333333333,
+      "reused": 23,
+      "median_frame_request_ms": 294.9324995279312,
+      "median_input_batch_ms": 1005.2342498674989
+    }
+  ]
+}
