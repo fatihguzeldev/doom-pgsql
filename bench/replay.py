@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import statistics
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -22,63 +23,82 @@ def route(n):
     return [0.6,0.25,0.035*heading,n%71==0,n%11==0]
 
 
-def measure(dsn, game, seconds, rtt):
-    barrier = threading.Barrier(3)
+def measure(dsn, game, seconds, rtt, container=None):
+    barrier = threading.Barrier(3, timeout=30)
+    begin_work = threading.Event()
+    pids = {}
+    start = finish = 0.
+
+    def backend_cpu():
+        if not container:
+            return {}
+        paths = [f'/proc/{pids[lane]}/schedstat' for lane in ('writer','reader')]
+        rows = subprocess.check_output(['docker','exec',container,'cat',*paths],text=True).splitlines()
+        return {lane:int(row.split()[0])/1e6 for lane,row in zip(('writer','reader'),rows)}
+
     delay = rtt/2000
 
-    def inputs():
+    def inputs(writer):
         timings, accepted = [], 0
-        with psycopg.connect(dsn,autocommit=True) as writer:
-            epoch,initial = writer.execute('SELECT epoch,tic FROM doom.game_status(%s)',(game,)).fetchone()
-            barrier.wait()
-            pending = 1
-            while time.monotonic()<finish:
-                now = time.monotonic()
-                last = min(math.floor((now-start)*35)+1,pending+15)
-                if pending>last:
-                    time.sleep(max(0,start+(pending-1)/35-now))
-                    continue
-                batch = [route(n) for n in range(pending,last+1)]
-                time.sleep(delay)
-                writer.execute('CALL doom.submit(%s,%s,%s,%s)',(game,epoch,initial+pending,Jsonb(batch)))
-                time.sleep(delay)
-                if time.monotonic()<=finish:
-                    accepted += len(batch)
-                    timings.append(1000*(time.monotonic()-now))
-                pending = last+1
+        epoch,initial = writer.execute('SELECT epoch,tic FROM doom.game_status(%s)',(game,)).fetchone()
+        barrier.wait()
+        begin_work.wait()
+        pending = 1
+        while time.monotonic()<finish:
+            now = time.monotonic()
+            last = min(math.floor((now-start)*35)+1,pending+15)
+            if pending>last:
+                time.sleep(max(0,start+(pending-1)/35-now))
+                continue
+            batch = [route(n) for n in range(pending,last+1)]
+            time.sleep(delay)
+            writer.execute('CALL doom.submit(%s,%s,%s,%s)',(game,epoch,initial+pending,Jsonb(batch)))
+            time.sleep(delay)
+            if time.monotonic()<=finish:
+                accepted += len(batch)
+                timings.append(1000*(time.monotonic()-now))
+            pending = last+1
         return accepted,timings
 
-    def frames():
+    def frames(reader):
         timings, pictures, fresh, repeated, sent = [], set(), 0, 0, 0
         token = None
-        with psycopg.connect(dsn,autocommit=True) as reader:
-            epoch, = reader.execute('SELECT epoch FROM doom.game_status(%s)',(game,)).fetchone()
-            barrier.wait()
-            while time.monotonic()<finish:
-                now = time.monotonic()
-                sent += 1
-                time.sleep(delay)
-                pic,light,token = reader.execute('SELECT pixels,shades,token FROM doom.poll_frame(%s,%s,%s,%s)',
-                    (game,epoch,sent,token),binary=True).fetchone()
-                time.sleep(delay)
-                if time.monotonic()<=finish:
-                    timings.append(1000*(time.monotonic()-now))
-                    if pic is None:
-                        repeated+=1
-                    else:
-                        fresh+=1
-                        pictures.add(hashlib.blake2s(pic+light).digest())
-                time.sleep(max(0,1/30-(time.monotonic()-now)))
+        epoch, = reader.execute('SELECT epoch FROM doom.game_status(%s)',(game,)).fetchone()
+        barrier.wait()
+        begin_work.wait()
+        while time.monotonic()<finish:
+            now = time.monotonic()
+            sent += 1
+            time.sleep(delay)
+            pic,light,token = reader.execute('SELECT pixels,shades,token FROM doom.poll_frame(%s,%s,%s,%s)',
+                (game,epoch,sent,token),binary=True).fetchone()
+            time.sleep(delay)
+            if time.monotonic()<=finish:
+                timings.append(1000*(time.monotonic()-now))
+                if pic is None:
+                    repeated+=1
+                else:
+                    fresh+=1
+                    pictures.add(hashlib.blake2s(pic+light).digest())
+            time.sleep(max(0,1/30-(time.monotonic()-now)))
         return fresh,len(pictures),repeated,timings
 
-    start = time.monotonic()+0.05
-    finish = start+seconds
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        writer,reader = pool.submit(inputs),pool.submit(frames)
-        barrier.wait()
-        tics,w = writer.result()
-        fresh,distinct,reused,f = reader.result()
-    return dict(seconds=seconds,artificial_rtt_ms=rtt,acknowledged_tics=tics,tics_per_s=tics/seconds,
+    with psycopg.connect(dsn,autocommit=True) as write_conn, psycopg.connect(dsn,autocommit=True) as read_conn:
+        pids.update(writer=write_conn.info.backend_pid,reader=read_conn.info.backend_pid)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer,reader = pool.submit(inputs,write_conn),pool.submit(frames,read_conn)
+            try:
+                barrier.wait()
+                before=backend_cpu()
+                start=time.monotonic()
+                finish=start+seconds
+            finally:
+                begin_work.set()
+            tics,w = writer.result()
+            fresh,distinct,reused,f = reader.result()
+            after=backend_cpu()
+    cpu = {lane:round(after[lane]-ms,3) for lane,ms in before.items()}
+    return dict(backend_cpu_ms_including_drain=cpu,seconds=seconds,artificial_rtt_ms=rtt,acknowledged_tics=tics,tics_per_s=tics/seconds,
         sql_frames=fresh,unique_images=distinct,unique_fps=distinct/seconds,reused=reused,
         median_frame_request_ms=statistics.median(f) if f else None,median_input_batch_ms=statistics.median(w) if w else None)
 
@@ -86,6 +106,7 @@ def measure(dsn, game, seconds, rtt):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dsn',default='')
+    parser.add_argument('--container',help='read CPU counters for this local PostgreSQL container')
     which=parser.add_mutually_exclusive_group(required=True)
     which.add_argument('--wad',type=Path)
     which.add_argument('--level',type=int)
@@ -98,7 +119,7 @@ def main():
     with psycopg.connect(args.dsn,autocommit=True) as c:
         level=args.level or c.execute('SELECT doom.load_wad(%s,%s)',(args.wad.read_bytes(),args.map)).fetchone()[0]
         game=c.execute('SELECT game_id FROM doom.new_game(%s)',(level,)).fetchone()[0]
-    print(json.dumps(measure(args.dsn,game,args.seconds,args.rtt_ms),indent=2))
+    print(json.dumps(measure(args.dsn,game,args.seconds,args.rtt_ms,args.container),indent=2))
 
 
 if __name__=='__main__':

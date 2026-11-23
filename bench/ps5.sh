@@ -19,6 +19,9 @@ until pg_isready -q; do
     [ "$attempt" -lt 50 ] || exit 1
     sleep 0.2
 done
+docker update --cpu-period 100000 --cpu-quota 6250 "$name" >/dev/null
+limits=$(docker exec "$name" cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.max.burst /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.swap.max)
+[ "$limits" = "$(printf '6250 100000\n0\n536870912\n0')" ] || exit 1
 psql -Xq -f "$repo/install.sql"
 level=$("$python" - "$wad" <<'PY'
 import psycopg,sys
@@ -28,7 +31,4 @@ with psycopg.connect() as c:
 PY
 )
 psql -Xqc 'ANALYZE'
-docker update --cpu-period 100000 --cpu-quota 6250 "$name" >/dev/null
-limits=$(docker exec "$name" cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/cpu.max.burst /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.swap.max)
-[ "$limits" = "$(printf '6250 100000\n0\n536870912\n0')" ] || exit 1
-"$python" -B "$repo/bench/replay.py" --level "$level" --seconds "$duration"
+"$python" -B "$repo/bench/replay.py" --level "$level" --seconds "$duration" --container "$name"
