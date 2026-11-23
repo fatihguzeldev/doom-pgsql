@@ -1,4 +1,4 @@
-"""Interpolate the 64×40 SQL image and expand its pixels onto Doom's 320×200 canvas."""
+"""Interpolate SQL frames and expand their pixels onto Doom's 320×200 canvas."""
 
 import hashlib
 import os
@@ -69,21 +69,27 @@ class Rife:
         ]
 
     def _rgb(self, image):
-        if (image.width, image.height) != (64, 40):
-            raise ValueError("RIFE expects a 64x40 RGB frame")
-        return self._np.frombuffer(image.rgb, dtype=self._np.uint8).reshape(40, 64, 3)
+        if (image.width, image.height) not in ((64, 40), (160, 100)):
+            raise ValueError("RIFE expects 64x40 or 160x100 RGB frames")
+        return self._np.frombuffer(image.rgb, dtype=self._np.uint8).reshape(
+            image.height, image.width, 3
+        )
 
     def _tensor(self, rgb):
         # This RIFE export requires both dimensions to be multiples of 64.
-        padded = self._np.pad(rgb, ((0, 24), (0, 0), (0, 0)), mode="edge")
+        h, w = rgb.shape[:2]
+        padded = self._np.pad(rgb, ((0, -h % 64), (0, -w % 64), (0, 0)), mode="edge")
         return padded.transpose(2, 0, 1)[None].astype(self._np.float32) / 255
 
     @staticmethod
     def _upscale(rgb):
         import numpy as np
 
-        pixels = rgb.repeat(5, axis=0).repeat(5, axis=1)
         h, w = rgb.shape[:2]
+        scale = 320 // w
+        pixels = rgb.repeat(scale, axis=0).repeat(scale, axis=1)
+        if scale == 2:
+            return Image(320, 200, pixels.tobytes())
         blocks = pixels.reshape(h, 5, w, 5, 3)
         padded = np.pad(rgb, ((1, 1), (1, 1), (0, 0)), mode="edge")
         top, bottom = padded[:-2, 1:-1], padded[2:, 1:-1]
@@ -103,11 +109,14 @@ class Rife:
 
     def infer_pair(self, first, second):
         a, b = self._rgb(first), self._rgb(second)
+        if a.shape != b.shape:
+            raise ValueError("RIFE frames must have matching dimensions")
+        h, w = a.shape[:2]
         inputs = {"img0": self._tensor(a), "img1": self._tensor(b)}
         frames = []
         for timestep in self._times:
             inputs["timestep"] = timestep
-            predicted = self._net.run(["frame"], inputs)[0][0, :, :40, :64]
+            predicted = self._net.run(["frame"], inputs)[0][0, :, :h, :w]
             rgb = (
                 (predicted.transpose(1, 2, 0).clip(0, 1) * 255)
                 .round()

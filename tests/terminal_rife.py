@@ -78,3 +78,19 @@ class RifeModelsTest(unittest.TestCase):
         for step in np.diff(centers):
             self.assertGreater(step, 0.4)
             self.assertLess(step, 2.8)
+
+        native = np.zeros((100, 160, 3), dtype=np.uint8)
+        native[71:96, 108:130] = (220, 160, 100)
+        first = Image(160, 100, native.tobytes())
+        shifted = np.roll(native, 9, axis=1)
+        last = Image(160, 100, shifted.tobytes())
+        views = (net.upscale(first), *net.infer_pair(first, last))
+        actual = [
+            np.frombuffer(view.rgb, dtype=np.uint8).reshape(200, 320, 3)
+            for view in views
+        ]
+        np.testing.assert_array_equal(actual[-1], shifted.repeat(2, 0).repeat(2, 1))
+        centers = [np.where(rgb[::2, ::2, 0] > 120)[1].mean() for rgb in actual]
+        self.assertTrue((np.diff(centers) > 0).all())
+        with self.assertRaisesRegex(ValueError, "matching dimensions"):
+            net.infer_pair(Image(64, 40, pixels.tobytes()), last)
