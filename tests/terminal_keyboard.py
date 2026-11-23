@@ -7,6 +7,40 @@ from examples.terminal.keyboard import ESC_DELAY, Keyboard
 
 
 class KeyboardTest(unittest.IsolatedAsyncioTestCase):
+    async def test_lit_physical_chord_and_short_taps(self):
+        keys = Keyboard()
+        keys.feed(b"\x1b[?11u\x1b[119u\x1b[A\x1b[106u\x1b[D\x1b[32u", 1)
+        held = frozenset(("w", "up", "j", "left", " "))
+        snapshot = keys.lit_keys(2)
+        self.assertIsInstance(snapshot, frozenset)
+        self.assertEqual(snapshot, held)
+        keys.feed(b"\x1b[119;1:3u\x1b[101u\x1b[101;1:3u", 2)
+        self.assertTrue(keys.sample(2)[3])
+        self.assertEqual(keys.lit_keys(2.09), (held - {"w"}) | {"e"})
+        self.assertEqual(keys.lit_keys(2.11), held - {"w"})
+        self.assertEqual(snapshot, held)
+
+    async def test_lit_keys_in_legacy_mode_and_menus(self):
+        keys = Keyboard()
+        keys.feed(b"r", 0)
+        self.assertTrue(keys.auto_walk)
+        self.assertEqual(keys.lit_keys(0.05), {"r"})
+        self.assertEqual(keys.lit_keys(1), set())
+        keys.feed(b"ww", 2)
+        keys.feed(b"w", 2.1)
+        self.assertEqual(keys.lit_keys(2.2), {"w"})
+        self.assertEqual(keys.lit_keys(2.3), set())
+        keys.set_menu(True)
+        keys.feed(b"\x1b[?11u\x1b[119u\x1b[A\r", 3)
+        self.assertEqual(keys.lit_keys(3.05), {"w", "up", "enter"})
+        self.assertEqual(keys.lit_keys(4), {"w", "up"})
+        self.assertEqual(keys.sample(4), (0, 0, 0, False, False))
+        keys.feed(b"\x1b[O\x1b[119;1:2u", 4)
+        self.assertFalse(keys.lit_keys(4))
+        keys.feed(b"\x1b[115u", 5)
+        keys.set_menu(False)
+        self.assertFalse(keys.lit_keys(5))
+
     async def test_release_and_aliases(self):
         keys = Keyboard()
         keys.feed(b"\x1b[?11u\x1b[119u\x1b[A\x1b[97u\x1b[32u", 0)

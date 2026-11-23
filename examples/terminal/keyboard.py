@@ -22,11 +22,13 @@ OPPOSITE = {
     "right": ("j", "left"),
 }
 GAME_KEYS = {"w", "s", "a", "d", "j", "l", "e", " ", "r", *ARROWS.values()}
+CONTROL_KEYS = GAME_KEYS | {"enter", "esc", "q"}
 SEQUENCE = re.compile(rb"\x1b(?:\[([0-?]*)([ -/]*)|O)([@-~])")
 ESC_DELAY = 0.05
 # Without key-up, a first tap can move until the OS's initial repeat delay expires.
 FIRST_REPEAT_LEASE = 0.55
 REPEAT_LEASE = 0.14
+TAP_HIGHLIGHT = 0.10
 
 
 class Keyboard:
@@ -40,6 +42,7 @@ class Keyboard:
         self._until = {}
         self._taps = set()
         self._actions = Counter()
+        self._lights = {}
         self._buffer = b""
         self._escape_timer = None
 
@@ -48,7 +51,12 @@ class Keyboard:
         self._until.clear()
         self._taps.clear()
         self._actions.clear()
+        self._lights.clear()
         self.auto_walk = False
+
+    def lit_keys(self, now):
+        """Return physical controls held or briefly lit after a tap."""
+        return frozenset(key for key, (held, until) in self._lights.items() if held or now < until)
 
     def set_menu(self, enabled):
         self.in_menu = enabled
@@ -65,7 +73,13 @@ class Keyboard:
         if event == 3:
             self._down.discard(key)
             self._until.pop(key, None)
+            if key in self._lights:
+                _, until = self._lights[key]
+                self._lights[key] = False, until
             return
+        if event == 1 and key in CONTROL_KEYS:
+            duration = TAP_HIGHLIGHT if reports_release else REPEAT_LEASE
+            self._lights[key] = reports_release, now + duration
         if key == "q":
             self._quit()
             return
