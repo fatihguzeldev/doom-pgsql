@@ -111,7 +111,7 @@ class Presenter:
         try:
             return await asyncio.shield(job)
         except asyncio.CancelledError:
-            # the next game may reuse this model before the worker thread exits
+            # wait for inference before the next game reuses the model
             await job
             raise
 
