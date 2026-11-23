@@ -68,7 +68,7 @@ DECLARE
     new_z int;
 BEGIN
     FOR m IN SELECT * FROM doom.movers WHERE game=g AND (resume_at IS NULL OR resume_at<=n)
-        AND (target<>CASE WHEN plane='floor' THEN floor_z ELSE ceiling_z END OR home IS NOT NULL)
+        AND (target<>CASE WHEN plane='floor' THEN floor_z ELSE ceiling_z END OR home IS NOT NULL) ORDER BY sector FOR UPDATE
     LOOP
         current_z := CASE WHEN m.plane='floor' THEN m.floor_z ELSE m.ceiling_z END;
         new_z := current_z+sign(m.target-current_z)::int*least(m.speed,abs(m.target-current_z));

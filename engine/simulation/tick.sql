@@ -27,8 +27,9 @@ BEGIN
         IF n<=g.tic OR g.finished THEN RETURN g.tic; END IF;
         RAISE EXCEPTION 'expected tic %, got %',g.tic+1,n USING ERRCODE='22023';
     END IF;
+    PERFORM 1 FROM doom.levels WHERE id=g.level FOR SHARE;
     PERFORM doom.advance(gid,n);
-    SELECT * INTO STRICT player FROM doom.actors WHERE game=gid AND id=-1;
+    SELECT * INTO STRICT player FROM doom.actors WHERE game=gid AND id=-1 FOR UPDATE;
     IF player.health<=0 THEN RETURN n; END IF;
     player.yaw := player.yaw+turn;
     player.yaw := player.yaw-floor(player.yaw/(2*pi()))*(2*pi());
@@ -93,7 +94,7 @@ BEGIN
     END LOOP;
     FOR foe IN SELECT a.* FROM doom.actors a WHERE a.game=gid AND a.role='monster' AND a.health>0 AND a.id%8=n%8
         AND a.awake_at<=n AND box(point(player.pos[0]-320,player.pos[1]-320),point(player.pos[0]+320,player.pos[1]+320)) @> a.pos
-        ORDER BY a.id LOOP
+        ORDER BY a.id FOR UPDATE OF a LOOP
         delta := player.pos-foe.pos; dist := foe.pos<->player.pos;
         CONTINUE WHEN dist>320 OR dist=0;
         IF sectors IS NULL THEN

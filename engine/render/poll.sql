@@ -67,3 +67,10 @@ BEGIN
     RETURN NEXT;
 END;
 $$;
+
+-- Read the palette corresponding to the exact frame. A concurrent edit asks the reader to poll again.
+CREATE FUNCTION doom.frame_palette(gid bigint,wanted_revision bigint) RETURNS bytea
+LANGUAGE sql STABLE STRICT AS $$
+    SELECT doom.frame_palette(gid) FROM doom.games g JOIN doom.levels l ON l.id=g.level
+    WHERE g.id=gid AND l.revision=wanted_revision;
+$$;

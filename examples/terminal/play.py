@@ -194,8 +194,12 @@ async def play(args):
                             elif revision != frame['palette_revision'] and display.frame:
                                 frame['pixels'],frame['shades'] = display.frame['pixels'],display.frame['shades']
                         if revision != frame['palette_revision']:
-                            result = await conn.execute('SELECT doom.frame_palette(%s) AS rgb',(game,),binary=True)
+                            result = await conn.execute('SELECT doom.frame_palette(%s,%s) AS rgb',
+                                                        (game,frame['palette_revision']),binary=True)
                             data = (await result.fetchone())['rgb']
+                            if data is None:
+                                token, hashes = None, None
+                                continue
                             display.palette = [f'{r};{g};{b}' for r,g,b in zip(data[::3],data[1::3],data[2::3])]
                             revision = frame['palette_revision']
                         for tic in list(turns):

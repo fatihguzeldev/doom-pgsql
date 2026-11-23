@@ -25,7 +25,7 @@ CREATE TABLE doom.art (
 );
 
 CREATE TABLE doom.sectors (
-    level bigint REFERENCES doom.levels ON DELETE CASCADE, id int,
+    level bigint REFERENCES doom.levels ON DELETE CASCADE, id int CHECK(id BETWEEN 0 AND 65535),
     floor_z int NOT NULL, ceiling_z int NOT NULL CHECK (ceiling_z>=floor_z),
     floor_tex text NOT NULL, ceiling_tex text NOT NULL,
     light int NOT NULL CHECK (light BETWEEN 0 AND 255),

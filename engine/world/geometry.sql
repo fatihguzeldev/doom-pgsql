@@ -93,7 +93,8 @@ DECLARE
     ids bigint[];
     p bigint;
 BEGIN
-    IF TG_OP='INSERT' THEN SELECT array_agg(DISTINCT level) INTO ids FROM after_edit;
+    IF TG_OP='TRUNCATE' THEN SELECT array_agg(id) INTO ids FROM doom.levels WHERE ready;
+    ELSIF TG_OP='INSERT' THEN SELECT array_agg(DISTINCT level) INTO ids FROM after_edit;
     ELSIF TG_OP='DELETE' THEN SELECT array_agg(DISTINCT level) INTO ids FROM before_edit;
     ELSE SELECT array_agg(level ORDER BY level) INTO ids FROM
         (SELECT level FROM before_edit UNION SELECT level FROM after_edit) edited;
@@ -110,6 +111,7 @@ DECLARE
     target text;
 BEGIN
     FOREACH target IN ARRAY ARRAY['lines','sides','sectors','art'] LOOP
+        EXECUTE format('CREATE TRIGGER compile_truncate AFTER TRUNCATE ON doom.%I FOR EACH STATEMENT EXECUTE FUNCTION doom.rebuild_edited()',target);
         EXECUTE format('CREATE TRIGGER compile_insert AFTER INSERT ON doom.%I REFERENCING NEW TABLE AS after_edit FOR EACH STATEMENT EXECUTE FUNCTION doom.rebuild_edited()',target);
         EXECUTE format('CREATE TRIGGER compile_delete AFTER DELETE ON doom.%I REFERENCING OLD TABLE AS before_edit FOR EACH STATEMENT EXECUTE FUNCTION doom.rebuild_edited()',target);
         EXECUTE format('CREATE TRIGGER compile_update AFTER UPDATE ON doom.%I REFERENCING NEW TABLE AS after_edit OLD TABLE AS before_edit FOR EACH STATEMENT EXECUTE FUNCTION doom.rebuild_edited()',target);
