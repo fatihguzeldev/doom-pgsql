@@ -6,28 +6,19 @@ DECLARE
     direction int := start_sector;
 BEGIN
     FOR hit IN
-        WITH cells AS (
-            -- Short use and sight rays use their bounding rectangle.
-            SELECT x,y FROM generate_series(ceil(least(origin[0],origin[0]+delta[0])/128)::int-1,
-                floor(greatest(origin[0],origin[0]+delta[0])/128)::int)x,
-                generate_series(ceil(least(origin[1],origin[1]+delta[1])/128)::int-1,
-                floor(greatest(origin[1],origin[1]+delta[1])/128)::int)y
-            WHERE greatest(abs(delta[0]),abs(delta[1]))<=128
-            UNION ALL SELECT c.x,c.y FROM doom.cells(origin,origin+delta)c
-            WHERE greatest(abs(delta[0]),abs(delta[1]))>128
-        ), boundaries AS MATERIALIZED (
-            SELECT DISTINCT ON (w.id) w.* FROM cells c
-            JOIN doom.blockmap b ON b.level=p AND b.x=c.x AND b.y=c.y CROSS JOIN LATERAL unnest(b.walls)w
-            WHERE box(w.segment[0],w.segment[1]) && box(origin,origin+delta)
-            ORDER BY w.id
-        ), contacts AS (
-            SELECT w.id,w.front AS r,w.back AS s,
+        -- The line bounds index returns each candidate once, even across many grid cells.
+        WITH contacts AS (
+            SELECT l.id,l.front,l.back,
                 (v[0]*edge[1]-v[1]*edge[0])/den AS k,(v[0]*delta[1]-v[1]*delta[0])/den AS u
-            FROM boundaries w,LATERAL(SELECT w.segment[1]-w.segment[0] AS edge,w.segment[0]-origin AS v) ab,
-            LATERAL (SELECT nullif(delta[0]*edge[1]-delta[1]*edge[0],0) AS den) d
+            FROM doom.lines l,LATERAL(SELECT l.b-l.a AS edge,l.a-origin AS v) ab,
+                LATERAL(SELECT nullif(delta[0]*edge[1]-delta[1]*edge[0],0) AS den)d
+            WHERE l.level=p AND box(l.a,l.b) && box(origin,origin+delta)
         )
-        SELECT c.* FROM contacts c WHERE c.k BETWEEN 0 AND 1 AND c.u BETWEEN 0 AND 1
-        ORDER BY c.k,(c.s IS NULL) DESC,c.id
+        SELECT c.id,c.k,f.sector AS r,b.sector AS s
+        FROM contacts c JOIN doom.sides f ON f.level=p AND f.id=c.front
+        LEFT JOIN doom.sides b ON b.level=p AND b.id=c.back
+        WHERE c.k BETWEEN 0 AND 1 AND c.u BETWEEN 0 AND 1
+        ORDER BY c.k,(c.back IS NULL) DESC,c.id
     LOOP
         CONTINUE WHEN direction<>hit.r AND direction IS DISTINCT FROM hit.s;
         sector:=direction; line:=hit.id; t:=hit.k;
