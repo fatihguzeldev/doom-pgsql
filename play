@@ -52,39 +52,7 @@ done
 
 if [[ $use_db == true ]]; then
     "${compose[@]}" up -d --wait db
-    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom <<'SQL'
-\o /dev/null
-SELECT pg_advisory_lock(hashtext('doom.install'));
-SELECT to_regnamespace('doom') IS NULL AS install \gset
-\if :install
-\i /app/install.sql
-\else
-SELECT to_regprocedure('doom.prepare_wad(bytea,text)') IS NULL AS upgrade \gset
-\if :upgrade
-BEGIN;
-\i /app/engine/wad/prepared.sql
-COMMIT;
-\endif
-SELECT NOT coalesce(proconfig @> ARRAY['plan_cache_mode=force_generic_plan'], false) AS upgrade_mesh
-FROM pg_proc WHERE oid='doom.compile_level(bigint)'::regprocedure \gset
-\if :upgrade_mesh
-ALTER FUNCTION doom.compile_level(bigint) SET plan_cache_mode=force_generic_plan;
-\endif
-SELECT prosqlbody IS NULL AS upgrade_palette
-FROM pg_proc WHERE oid='doom.frame_palette(bigint)'::regprocedure \gset
-\if :upgrade_palette
-\i /app/engine/render/palette.sql
-\endif
-\if :rife
-SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NULL AS install_low \gset
-\if :install_low
-BEGIN;
-\i /app/engine/render/lowres.sql
-COMMIT;
-\endif
-\endif
-\endif
-SQL
+    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom -f /app/engine/bootstrap.sql
 else
     compose=(docker compose -f "$repo/compose.services.yaml")
 fi
