@@ -1,5 +1,5 @@
 CREATE FUNCTION doom.tick(gid bigint,generation bigint,n bigint,forward float8,strafe float8,turn float8,
-    use_line boolean,fire boolean) RETURNS bigint LANGUAGE plpgsql SET jit=off AS $$
+    use_line boolean,fire boolean) RETURNS bigint LANGUAGE plpgsql SET jit=off SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     cmd doom.command := (forward,strafe,turn,use_line,fire);
     g doom.games;

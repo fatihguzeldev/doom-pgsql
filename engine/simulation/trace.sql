@@ -6,15 +6,14 @@ DECLARE
     direction int := start_sector;
 BEGIN
     FOR hit IN
-        WITH ids AS MATERIALIZED (
-            SELECT DISTINCT unnest(b.lines) AS id FROM doom.cells(origin,origin+delta) c
-            JOIN doom.blockmap b ON b.level=p AND b.x=c.x AND b.y=c.y
+        WITH boundaries AS MATERIALIZED (
+            SELECT DISTINCT ON (w.id) w.* FROM doom.cells(origin,origin+delta)c
+            JOIN doom.blockmap b ON b.level=p AND b.x=c.x AND b.y=c.y CROSS JOIN LATERAL unnest(b.walls)w
+            ORDER BY w.id
         ), contacts AS (
-            SELECT l.id,l.flags,r.sector AS r,s.sector AS s,
-                (ab.v[0]*edge[1]-ab.v[1]*edge[0])/den AS k,(ab.v[0]*delta[1]-ab.v[1]*delta[0])/den AS u
-            FROM ids JOIN doom.lines l ON l.level=p AND l.id=ids.id
-            JOIN doom.sides r ON r.level=p AND r.id=l.front LEFT JOIN doom.sides s ON s.level=p AND s.id=l.back,
-            LATERAL (SELECT l.b-l.a AS edge,l.a-origin AS v) ab,
+            SELECT w.id,w.front AS r,w.back AS s,
+                (v[0]*edge[1]-v[1]*edge[0])/den AS k,(v[0]*delta[1]-v[1]*delta[0])/den AS u
+            FROM boundaries w,LATERAL(SELECT w.segment[1]-w.segment[0] AS edge,w.segment[0]-origin AS v) ab,
             LATERAL (SELECT nullif(delta[0]*edge[1]-delta[1]*edge[0],0) AS den) d
         )
         SELECT c.*, greatest(coalesce(rm.floor_z,rs.floor_z),coalesce(sm.floor_z,ss.floor_z)) AS bottom,
@@ -41,33 +40,38 @@ CREATE TYPE doom.location AS (pos point,sector int,z float8);
 CREATE FUNCTION doom.try_move(p bigint,body doom.actors,next_pos point) RETURNS doom.location
 LANGUAGE plpgsql STABLE STRICT AS $$
 DECLARE
-    obstacle record;
+    obstacle doom.boundary;
+    tile doom.blockmap;
     dest int := body.sector;
     floor_at int;
+    bottom int;
+    top_z int;
+    solid boolean;
+    path lseg:=lseg(body.pos,next_pos);
+    seen int[]:='{}';
 BEGIN
-    FOR obstacle IN
-        WITH ids AS MATERIALIZED (
-            SELECT DISTINCT unnest(b.lines) AS id FROM doom.cells(body.pos,next_pos,body.radius)c
-            JOIN doom.blockmap b ON b.level=p AND b.x=c.x AND b.y=c.y
-        )
-        SELECT lseg(l.a,l.b) AS segment,l.flags,r.sector AS front,s.sector AS back,
-            greatest(coalesce(rm.floor_z,rs.floor_z),coalesce(sm.floor_z,ss.floor_z)) AS bottom,
-            least(coalesce(rm.ceiling_z,rs.ceiling_z),coalesce(sm.ceiling_z,ss.ceiling_z)) AS top
-        FROM ids JOIN doom.lines l ON l.level=p AND l.id=ids.id
-        JOIN doom.sides r ON r.level=p AND r.id=l.front LEFT JOIN doom.sides s ON s.level=p AND s.id=l.back
-        JOIN doom.sectors rs ON rs.level=p AND rs.id=r.sector LEFT JOIN doom.sectors ss ON ss.level=p AND ss.id=s.sector
-        LEFT JOIN doom.movers rm ON rm.game=body.game AND rm.sector=r.sector
-        LEFT JOIN doom.movers sm ON sm.game=body.game AND sm.sector=s.sector
-        WHERE lseg(body.pos,next_pos) <-> lseg(l.a,l.b) <= body.radius
-    LOOP
-        IF obstacle.back IS NULL OR (obstacle.flags & 1)<>0 OR
-           (body.role='monster' AND (obstacle.flags&2)<>0) OR obstacle.bottom>body.z+24 OR
-           obstacle.top-greatest(body.z,obstacle.bottom)<body.height THEN
-            IF (next_pos <-> obstacle.segment) <= (body.pos <-> obstacle.segment) THEN RETURN NULL; END IF;
-        ELSIF lseg(body.pos,next_pos) ?# obstacle.segment THEN
-            dest := doom.sector_at(p,next_pos);
-            IF dest IS NULL THEN RETURN NULL; END IF;
-        END IF;
+    FOR tile IN SELECT * FROM doom.blockmap b WHERE b.level=p
+        AND b.x BETWEEN ceil((least(body.pos[0],next_pos[0])-body.radius)/128)::int-1
+            AND floor((greatest(body.pos[0],next_pos[0])+body.radius)/128)::int
+        AND b.y BETWEEN ceil((least(body.pos[1],next_pos[1])-body.radius)/128)::int-1
+            AND floor((greatest(body.pos[1],next_pos[1])+body.radius)/128)::int LOOP
+        FOREACH obstacle IN ARRAY tile.walls LOOP
+            CONTINUE WHEN path <-> obstacle.segment > body.radius OR obstacle.id=ANY(seen);
+            seen:=array_append(seen,obstacle.id);
+            solid:=obstacle.back IS NULL OR (obstacle.flags & 1)<>0 OR (body.role='monster' AND (obstacle.flags&2)<>0);
+            IF NOT solid THEN
+                SELECT max(coalesce(m.floor_z,s.floor_z)),min(coalesce(m.ceiling_z,s.ceiling_z)) INTO bottom,top_z
+                FROM doom.sectors s LEFT JOIN doom.movers m ON m.game=body.game AND m.sector=s.id
+                WHERE s.level=p AND s.id IN (obstacle.front,obstacle.back);
+                solid:=bottom>body.z+24 OR top_z-greatest(body.z,bottom)<body.height;
+            END IF;
+            IF solid THEN
+                IF path ?# obstacle.segment OR (next_pos <-> obstacle.segment) <= (body.pos <-> obstacle.segment) THEN RETURN NULL; END IF;
+            ELSIF path ?# obstacle.segment THEN
+                dest:=doom.sector_at(p,next_pos);
+                IF dest IS NULL THEN RETURN NULL; END IF;
+            END IF;
+        END LOOP;
     END LOOP;
     IF EXISTS (SELECT FROM doom.actors a WHERE a.game=body.game AND a.id<>body.id AND a.health>0
         AND a.role IN ('player','monster','barrel')

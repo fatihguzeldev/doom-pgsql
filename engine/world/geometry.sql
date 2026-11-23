@@ -27,8 +27,9 @@ RETURNS TABLE(x int,y int) LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
                     v+(least(hi,128.*(i+1)+padding)-u)*slope AS v1) ends,
     LATERAL generate_series(ceil((least(v0,v1)-padding)/128)::int-1,floor((greatest(v0,v1)+padding)/128)::int)j;
 $$;
+CREATE TYPE doom.boundary AS (id int, segment lseg, front int, back int, flags int);
 CREATE TABLE doom.blockmap (
-    level bigint REFERENCES doom.levels ON DELETE CASCADE, x int,y int,lines int[] NOT NULL,
+    level bigint REFERENCES doom.levels ON DELETE CASCADE, x int,y int,walls doom.boundary[] NOT NULL,
     PRIMARY KEY(level,x,y)
 );
 
@@ -69,8 +70,11 @@ BEGIN
     UPDATE doom.mesh m SET component=c.root FROM (SELECT id,min(root) AS root FROM reach GROUP BY id)c
     WHERE m.level=p AND m.sector=c.id;
     DELETE FROM doom.blockmap WHERE level=p;
-    INSERT INTO doom.blockmap SELECT p,c.x,c.y,array_agg(l.id ORDER BY l.id)
-    FROM doom.lines l, LATERAL doom.cells(l.a,l.b)c WHERE l.level=p GROUP BY c.x,c.y;
+    INSERT INTO doom.blockmap
+    SELECT p,c.x,c.y,array_agg(ROW(l.id,lseg(l.a,l.b),f.sector,b.sector,l.flags)::doom.boundary ORDER BY l.id)
+    FROM doom.lines l JOIN doom.sides f ON f.level=p AND f.id=l.front
+    LEFT JOIN doom.sides b ON b.level=p AND b.id=l.back
+    CROSS JOIN LATERAL doom.cells(l.a,l.b)c WHERE l.level=p GROUP BY c.x,c.y;
     UPDATE doom.levels SET revision=revision+1 WHERE id=p;
 END;
 $$;
