@@ -8,24 +8,24 @@
   </head>
   <body class="home">
     <main class="book-home">
-      <h1 class="wordmark">
-        <img src="assets/logo.png" width="672" height="98" alt="doom-pgsql">
-      </h1>
+      <h1 class="visually-hidden">doomsql</h1>
+      <figure class="opening-frame">
+        <img src="assets/frame.png" width="160" height="100" alt="a first-person game frame rendered by postgres">
+        <figcaption>postgres drew this frame</figcaption>
+      </figure>
+      <p class="opening-line">i rewrote doom’s engine in sql to see if i could make it playable on planetscale’s $5 postgres plan.</p>
       <nav class="chapter-index" aria-labelledby="chapters">
         <h2 id="chapters">chapters</h2>
         <ol class="chapter-list">
-          <li><a href="chapters/01/" aria-label="chapter 01"><span class="chapter-number">01</span></a></li>
-          <li><a href="chapters/02/" aria-label="chapter 02"><span class="chapter-number">02</span></a></li>
-          <li>
-            <a href="chapters/03/" aria-label="chapter 03"><span class="chapter-number">03</span></a>
-            <ol class="chapter-sections">
-              <li><a href="chapters/03/#section-01" aria-label="section 03.1"><span class="chapter-number">03.1</span></a></li>
-              <li><a href="chapters/03/#section-02" aria-label="section 03.2"><span class="chapter-number">03.2</span></a></li>
-            </ol>
-          </li>
-          <li><a href="chapters/04/" aria-label="chapter 04"><span class="chapter-number">04</span></a></li>
+          <li><a href="chapters/01/"><span class="chapter-number">1</span> <span class="chapter-title">the story</span></a></li>
+          <li><a href="chapters/02/"><span class="chapter-number">2</span> <span class="chapter-title">$5 worth of planetscale</span></a></li>
+          <li><a href="chapters/03/"><span class="chapter-number">3</span> <span class="chapter-title">making it playable</span></a></li>
+          <li><a href="chapters/04/"><span class="chapter-number">4</span> <span class="chapter-title">dlss (kinda)</span></a></li>
         </ol>
       </nav>
+      <footer class="book-signature">
+        <img src="assets/logo.png" width="672" height="98" alt="">
+      </footer>
     </main>
   </body>
 </html>
