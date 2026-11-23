@@ -21,6 +21,6 @@ CREATE SCHEMA doom;
 \ir engine/render/planes.sql
 \ir engine/render/palette.sql
 \ir engine/render/scenes.sql
-\ir engine/render/lowres.sql
+\ir engine/render/frame.sql
 \ir engine/render/cache.sql
 COMMIT;
