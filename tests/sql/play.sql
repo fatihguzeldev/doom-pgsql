@@ -55,6 +55,12 @@ BEGIN
     ASSERT get_byte(pic,8050)=55 AND get_byte(pic,8051)=49,'masked sprite must show both the far wall and its opaque texel';
     ASSERT get_byte(pic,8099)=4 AND get_byte(pic,8000)=5,'floor and ceiling';
     ASSERT (SELECT pixels IS NULL FROM doom.poll_frame(g,1,2,key));
+    INSERT INTO doom.art(level,kind,name,w,h,pixels)
+    SELECT p,'wall','SKY1',1,100,decode(string_agg(lpad(to_hex(y),2,'0'),'' ORDER BY y),'hex')
+    FROM generate_series(0,99)y;
+    UPDATE doom.sectors SET ceiling_z=52,ceiling_tex=CASE WHEN id=1 THEN 'F_SKY1' ELSE 'C' END WHERE level=p;
+    ASSERT (SELECT get_byte(pixels,8038)=38 FROM doom.frame(g,1,2)),'clipped sky must retain its screen row';
+    UPDATE doom.sectors SET ceiling_z=80,ceiling_tex='C' WHERE level=p;
     UPDATE doom.sectors SET ceiling_z=0 WHERE level=p AND id=1;
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,3,key);
     ASSERT get_byte(pic,8050)=153 AND get_byte(pic,8051)=153,'closed portal must hide sprites';

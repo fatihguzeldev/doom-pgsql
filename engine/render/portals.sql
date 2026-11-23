@@ -188,7 +188,7 @@ BEGIN
                     bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)))::int;
                     IF y0<top_y THEN
                         IF front.sky THEN RETURN NEXT (x,y0,top_y,2,front.ceil_id,
-                            (body.yaw-sky_angles[1+x])*512/pi(),0,1,depth,255)::doom.stroke;
+                            (body.yaw-sky_angles[1+x])*512/pi(),y0,1,depth,255)::doom.stroke;
                         ELSE RETURN NEXT (x,y0,top_y,0,front.ceil_id,0,front.z_ceil,0,depth,front.light)::doom.stroke; END IF;
                     END IF;
                     IF bottom_y<y1 THEN RETURN NEXT (x,bottom_y,y1,0,front.floor_id,0,front.z_floor,0,depth,front.light)::doom.stroke; END IF;
