@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
+from examples.terminal.art import Image
 from examples.terminal.display import (
     KEY_AMBER,
     KEY_CYAN,
@@ -29,8 +30,7 @@ def key_positions(rows):
     return positions
 
 
-FRAME = {"width": 8, "height": 5, "pixels": bytes(40), "shades": bytes(40)}
-PALETTE = bytes((3, 5, 7))
+WORLD = Image(8, 5, bytes((3, 5, 7)) * 40)
 STATUS = {"map": "E1M1", "game": 1, "health": 100, "armor": 0, "ammo": 50}
 
 
@@ -71,15 +71,15 @@ class KeycapsTest(unittest.TestCase):
         display = Display()
         with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))):
             with redirect_stdout(io.StringIO()) as initial:
-                display.paint(FRAME, PALETTE, STATUS)
+                display.paint(WORLD, STATUS)
             self.assertIn("HP 100%", initial.getvalue())
             self.assertIn("FPS 0.0", initial.getvalue())
             with redirect_stdout(io.StringIO()) as down:
-                display.paint(FRAME, PALETTE, STATUS, lit_keys={"w", " "})
+                display.paint(WORLD, STATUS, lit_keys={"w", " "})
             self.assertIn(KEY_CYAN, down.getvalue())
             self.assertIn(KEY_AMBER, down.getvalue())
             with redirect_stdout(io.StringIO()) as released:
-                display.paint(FRAME, PALETTE, STATUS)
+                display.paint(WORLD, STATUS)
             self.assertIn(KEY_FACE, released.getvalue())
             self.assertNotIn(KEY_CYAN, released.getvalue())
             for update in (down, released):
@@ -91,7 +91,7 @@ class KeycapsTest(unittest.TestCase):
         for width, height in ((60, 20), (80, 24), (116, 42)):
             size = os.terminal_size((width, height))
             with patch("shutil.get_terminal_size", return_value=size), redirect_stdout(io.StringIO()):
-                display.paint(FRAME, PALETTE, STATUS, lit_keys={"left", " "})
+                display.paint(WORLD, STATUS, lit_keys={"left", " "})
             world = [
                 (x, y, _cells(SGR.sub("", line)))
                 for y, row in enumerate(display._previous)
@@ -113,10 +113,10 @@ class KeycapsTest(unittest.TestCase):
         for size in ((80, 24), (116, 42)):
             with patch("shutil.get_terminal_size", return_value=os.terminal_size(size)):
                 with redirect_stdout(io.StringIO()):
-                    display.paint(FRAME, PALETTE, STATUS, phase=0)
+                    display.paint(WORLD, STATUS, phase=0)
                 first_page = display._previous
                 with redirect_stdout(io.StringIO()) as update:
-                    display.paint(FRAME, PALETTE, STATUS, phase=10)
+                    display.paint(WORLD, STATUS, phase=10)
                 moved = [(a, b) for a, b in zip(first_page, display._previous) if a != b]
                 self.assertTrue(moved)
                 for before, after in moved:

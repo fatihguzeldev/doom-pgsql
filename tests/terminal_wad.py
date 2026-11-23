@@ -63,8 +63,8 @@ def run(wad):
         try:
             proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave)
             try:
-                data = read_until(master, "▀".encode())
-                assert b"38;2;" in data and b"48;2;" in data
+                data = read_until(master, b"AMMO ")
+                assert "▀".encode() in data and b"38;2;" in data and b"48;2;" in data
                 old = editor.execute(
                     "SELECT yaw FROM doom.actors WHERE game=%s AND id=-1", (game,)
                 ).fetchone()

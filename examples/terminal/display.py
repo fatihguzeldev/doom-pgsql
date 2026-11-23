@@ -254,7 +254,7 @@ class Display:
         self._cursor = _image_rows(skull, 6, 3) if skull else ()
         self._previous = None
         self._size = None
-        self._frame = self._palette = self._world = None
+        self._world = None
         self._render_key = self._title_key = None
         self._rendered = self._title_rows = ()
 
@@ -286,19 +286,9 @@ class Display:
         page.centered(y + 2, f"{seconds}s    Q quit", VIOLET)
         self._present(page)
 
-    def _game_rows(self, frame, palette, status, turn, shot_age, cols, rows):
-        if palette is not self._palette:
-            self._palette = palette
-            self._colors = [bytes(palette[i : i + 3]) for i in range(0, len(palette), 3)]
-            self._frame = None
-        if frame is not self._frame:
-            self._frame = frame
-            w, h = frame["width"], frame["height"]
-            pixels, shades = frame["pixels"], frame["shades"]
-            rgb = b"".join(
-                self._colors[256 * shades[i] + pixels[i]] for y in range(h) for i in range(y, w * h, h)
-            )
-            self._world = Image(w, h, rgb)
+    def _game_rows(self, world, status, turn, shot_age, cols, rows):
+        if world is not self._world:
+            self._world = world
             self._render_key = None
         health, armor, ammo = (status.get(key, 0) for key in ("health", "armor", "ammo"))
         shot_tic = int(35 * shot_age) if shot_age is not None else None
@@ -315,7 +305,7 @@ class Display:
         return self._rendered
 
     def paint(
-        self, frame, palette, status, turn=0.0, fps=0.0, shot_age=None, *, phase=0, lit_keys=frozenset()
+        self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset()
     ):
         page = _Page()
         logo = _logo(page)
@@ -328,7 +318,7 @@ class Display:
         header = len(logo) + above_fps + 1 + below_fps
         reserve = max(header, footer)
         cols, rows = _fit_image(
-            frame["width"], frame["height"], page.space, max(1, page.height - 2 * reserve)
+            world.width, world.height, page.space, max(1, page.height - 2 * reserve)
         )
         if not cols:
             self._present(page)
@@ -337,12 +327,14 @@ class Display:
         y = (page.height - rows) // 2
         _draw_logo(page, logo, y - header, phase)
         readout = f"FPS {fps:.1f}"
+        if sql_fps is not None:
+            readout += f"   SQL {sql_fps:.1f}"
         fps_y = y - below_fps - 1
         if len(readout) <= cols:
             page.put(x + cols - len(readout), fps_y, VIOLET + readout)
         else:
             page.centered(fps_y, readout, VIOLET)
-        for i, row in enumerate(self._game_rows(frame, palette, status, turn, shot_age, cols, rows)):
+        for i, row in enumerate(self._game_rows(world, status, turn, shot_age, cols, rows)):
             page.put(x, y + i, row)
         below = y + rows
         hud = f"HP {status.get('health', 0)}%   ARM {status.get('armor', 0)}%   AMMO {status.get('ammo', 0)}"

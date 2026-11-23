@@ -9,6 +9,9 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .art import world_image
+from .presentation import Presenter
+
 
 def connect(dsn, *, autocommit=True):
     return psycopg.AsyncConnection.connect(dsn, autocommit=autocommit, row_factory=dict_row)
@@ -54,6 +57,12 @@ async def prepare_level(db, wad, map_name):
 
 async def open_game(args, wad, level=None, previous_game=None):
     async with await connect(args.dsn, autocommit=False) as db:
+        if getattr(args, "rife", False):
+            result = await db.execute(
+                "SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NOT NULL AS ready"
+            )
+            if not (await result.fetchone())["ready"]:
+                raise ValueError("install engine/render/lowres.sql on this database to use --rife")
         if args.game is None:
             if level is None:
                 level = await prepare_level(db, wad, args.map)
@@ -84,10 +93,11 @@ async def open_game(args, wad, level=None, previous_game=None):
 
 
 class Frames:
-    def __init__(self, state, delta):
+    def __init__(self, state, delta, low_resolution=False):
         self.game = state["game"]
         self.epoch = state["epoch"]
         self.delta = delta
+        self.low_resolution = low_resolution
         self.frame = self.palette = self.revision = None
         self.token = self.hashes = None
         self.slot = 0
@@ -98,6 +108,8 @@ class Frames:
         if self.delta:
             source = "doom.poll_tiles(%s,%s,%s,%s,%s)"
             params.append(self.hashes)
+        elif self.low_resolution:
+            source = "doom.poll_frame_low(%s,%s,%s,%s)"
         else:
             source = "doom.poll_frame(%s,%s,%s,%s)"
         # Read the HUD and the world from the same database snapshot.
@@ -147,10 +159,12 @@ class Frames:
 
 
 class Session:
-    def __init__(self, args, state, keys):
+    def __init__(self, args, state, keys, engine=None):
         self.dsn, self.state, self.keys = args.dsn, state, keys
         self.one_way_delay = args.rtt_ms / 2000
-        self.frames = Frames(state, args.delta)
+        self.frames = Frames(state, args.delta, low_resolution=engine is not None)
+        self.presenter = Presenter(engine) if engine is not None else None
+        self.world = None
         self.active = asyncio.Event()
         self.active.set()
         self.pending = asyncio.Queue(maxsize=2)
@@ -213,12 +227,18 @@ class Session:
                     while True:
                         await self.active.wait()
                         start = monotonic()
+                        prior_revision = self.frames.revision
                         packet, changed = await self.frames.poll(db, self.one_way_delay)
                         if packet is None:
                             continue
                         now = monotonic()
                         if changed:
                             self._arrivals.append(now)
+                            self.world = world_image(self.frames.frame, self.frames.palette)
+                            if self.presenter is not None:
+                                if self.frames.revision != prior_revision:
+                                    self.presenter.reset()
+                                self.presenter.submit(self.world, packet["tic"], now)
                         for tic in tuple(self.turns):
                             if tic <= packet["tic"]:
                                 del self.turns[tic]
@@ -245,4 +265,7 @@ class Session:
                             self.keys.menu_keys.put_nowait("end")
                         await asyncio.sleep(max(0, 1 / 30 - (monotonic() - start)))
             except psycopg.OperationalError:
+                if self.presenter is not None:
+                    self.presenter.reset()
+                    self.frames.token = None
                 await asyncio.sleep(0.1)

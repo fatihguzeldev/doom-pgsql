@@ -145,17 +145,22 @@ async def loading_screen(display, target, started):
 async def play_session(session, display, keys, maps, started):
     while True:
         now = monotonic()
-        if session.frames.frame is not None and session.status:
+        world = session.world
+        presenter = session.presenter
+        if presenter is not None:
+            view = presenter.sample(now)
+            world = view.image if view is not None else None
+        if world is not None and session.status:
             turn = sum(session.turns.values()) if session.predict_turn else 0
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
                 age = None
             display.paint(
-                session.frames.frame,
-                session.frames.palette,
+                world,
                 dict(session.status, auto_walk=keys.auto_walk),
                 turn,
-                session.fps(now),
+                presenter.fps(now) if presenter is not None else session.fps(now),
+                sql_fps=session.fps(now) if presenter is not None else None,
                 shot_age=age,
                 phase=int(now * LOGO_HZ),
                 lit_keys=keys.lit_keys(now),
@@ -163,12 +168,15 @@ async def play_session(session, display, keys, maps, started):
         else:
             display.loading(session.state["map"], int(now - started), int(now * LOGO_HZ))
         try:
-            key = await asyncio.wait_for(keys.menu_keys.get(), 1 / 35)
+            period = 1 / 60 if presenter is not None else 1 / 35
+            key = await asyncio.wait_for(keys.menu_keys.get(), max(0.001, period - (monotonic() - now)))
         except TimeoutError:
             continue
         if key not in ("esc", "end"):
             continue
         session.active.clear()
+        if presenter is not None:
+            presenter.reset()
         if session.ended:
             finished = session.status["finished"]
             following = (
@@ -198,6 +206,9 @@ async def play_session(session, display, keys, maps, started):
         if action != "resume":
             return action
         keys.set_menu(False)
+        if presenter is not None:
+            presenter.reset()
+            session.frames.token = None
         session.active.set()
 
 
@@ -206,6 +217,11 @@ async def play(args, keys):
     wad = path.read_bytes() if path.exists() or args.game is None else b""
     art = Art.from_bytes(wad)
     display = Display(art)
+    engine = None
+    if args.rife:
+        from examples.terminal.rife import Rife
+
+        engine = await first(loading_screen(display, "RIFE", monotonic()), asyncio.to_thread(Rife))
     maps = art.maps
     if args.game is None and args.map and maps and args.map not in maps:
         raise ValueError(f"Map {args.map} not found in {path.name}")
@@ -231,13 +247,16 @@ async def play(args, keys):
             if args.map not in maps:
                 maps = (*maps, args.map)
             keys.set_menu(False)
-            session = Session(args, state, keys)
-            action = await first(
+            session = Session(args, state, keys, engine)
+            tasks = [
                 play_session(session, display, keys, maps, started),
                 session.capture(),
                 session.submit(),
                 session.receive(sound),
-            )
+            ]
+            if session.presenter is not None:
+                tasks.append(session.presenter.run())
+            action = await first(*tasks)
             args.game = None
             if action == "quit":
                 return
@@ -268,6 +287,7 @@ def main():
     parser.add_argument(
         "--skill", type=int, choices=range(1, 6), default=3, help="initial difficulty (default: 3)"
     )
+    parser.add_argument("--rife", action="store_true", help="upscale 64x40 SQL frames and interpolate at 5x")
     parser.add_argument("--delta", action="store_true", help="receive changed eight-column strips")
     parser.add_argument(
         "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
@@ -279,6 +299,8 @@ def main():
     )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
     args = parser.parse_args()
+    if args.rife and (args.delta or args.predict_turn):
+        parser.error("--rife uses full 64x40 frames and buffered turns; omit --delta and --predict-turn")
     try:
         args.rtt_ms = local_rtt_ms(args.dsn, args.rtt_ms)
     except ValueError as error:

@@ -3,6 +3,7 @@
 import re
 import struct
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,20 @@ class Image:
     alpha: bytes | None = None
     left: int = 0
     top: int = 0
+
+
+@lru_cache(maxsize=1)
+def _palette_colors(palette):
+    return tuple(palette[i : i + 3] for i in range(0, len(palette), 3))
+
+
+def world_image(frame, palette):
+    """Decode the SQL renderer's column-major pixels into a row-major RGB image."""
+    w, h = frame["width"], frame["height"]
+    pixels, shades = frame["pixels"], frame["shades"]
+    colors = _palette_colors(palette)
+    rgb = b"".join(colors[256 * shades[i] + pixels[i]] for y in range(h) for i in range(y, w * h, h))
+    return Image(w, h, rgb)
 
 
 def _directory(wad):
