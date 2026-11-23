@@ -1,23 +1,31 @@
-# DOOM-PGSQL
+![doom-pgsql](assets/logo.png)
 
-With Docker running and the Compose plugin installed, open a terminal in this directory and run
+postgres runs the game and renders the world.
 
 ```sh
 ./play
 ```
 
-The first run installs the SQL engine in PostgreSQL and opens the DOOM-PGSQL menu with the bundled shareware WAD. Press Enter to start E1M1. Use the arrow keys to choose a map and difficulty, or select **Load game** to continue a previous game.
+press `enter` to start the bundled shareware episode. use the arrow keys in the menu to pick a map or difficulty.
 
-Move with WASD, turn with J/L or the left and right arrows, fire with Space, and open doors with E. Esc pauses and Q quits. In terminals that report key releases, movement stops when you release the key. Other terminals estimate the release from key repeat, so a short tap can last up to half a second. R toggles auto-walk.
+## controls
 
-The keyboard below the game lights up as you play. It shows simultaneous inputs, including movement and fire. The FPS counter counts fresh world frames from PostgreSQL over the last second. It can reach zero while the view is still. Pistol shots use the WAD sound on hosts with `afplay`, `paplay`, or `aplay`. Other hosts use the terminal bell. Pass `--mute` for silence.
+move with `wasd`. turn with `j` and `l` or the left and right arrows. `space` fires, `e` opens doors and `r` toggles auto-walk. press `esc` to pause or `q` to quit.
 
-```sh
-./play --map E1M7 --skill 1
-./play --wad ~/games/doom2.wad --map MAP01
-./play --game 1
-```
+## flags
 
-Use `--wad` for a classic WAD that includes its own map and textures. Use `--dsn` to connect to an existing SQL Doom database. Run `./play --help` to see all options.
+| flag | what it does |
+| --- | --- |
+| `--wad doom2.wad` | use your own wad with maps and textures |
+| `--map e1m7` | pick the starting map |
+| `--skill 3` | set the difficulty from 1 to 5 (default 3) |
+| `--game 1` | resume a saved game by id |
+| `--dsn <connection>` | connect to a postgres database with the game installed |
+| `--rtt-ms 50` | add 50 ms of simulated round-trip delay for this run (0 disables it) |
+| `--delta` | fetch only the parts of the frame that changed |
+| `--predict-turn` | show turns before the next frame arrives |
+| `--mute` | turn off sound |
 
-After quitting, `docker compose down` stops PostgreSQL. Your games stay in the Compose volume for the next run.
+edit [settings.yaml](settings.yaml) to change the local database limits and simulated delay.
+
+`docker compose down` stops the database and keeps your saves.
