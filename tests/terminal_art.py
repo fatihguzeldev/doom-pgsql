@@ -18,7 +18,7 @@ def wad(*lumps):
 class TerminalArtTest(unittest.TestCase):
     def test_patch_posts_transparency_and_palette(self):
         palette = bytes([1, 2, 3, 51, 52, 53]) + bytes(762)
-        # Column zero starts on row one, column one contains both pixels.
+        # column zero starts below column one
         pic = struct.pack("<HHhhII", 2, 2, -1, 3, 16, 22)
         pic += bytes([1, 1, 0, 1, 0, 255, 0, 2, 0, 0, 1, 0, 255])
         art = Art.from_bytes(wad(("PLAYPAL", palette), ("M_SKULL1", pic), ("TITLEPIC", pic[:-1])))

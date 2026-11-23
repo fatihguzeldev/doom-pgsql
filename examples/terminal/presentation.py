@@ -1,5 +1,3 @@
-"""Schedule live interpolation from SQL frames as they arrive."""
-
 import asyncio
 import math
 from collections import deque
@@ -18,7 +16,7 @@ class View:
     yaw: float | None = None
 
 
-# Two input tics. A larger preview would expose too much of the unrendered edge.
+# two input tics limit the exposed edge during a turn
 MAX_PREVIEW = 0.18
 
 
@@ -69,7 +67,6 @@ class Presenter:
         self._shown.clear()
 
     def submit(self, image, tic, arrived, yaw=None):
-        # Keep one pending SQL frame if inference falls behind the database.
         self._latest = (image, tic, arrived, yaw)
         self._ready.set()
 
@@ -95,7 +92,7 @@ class Presenter:
                 interval = 0
             else:
                 views = await self._infer(self.engine.infer_pair, previous[0], image)
-                # Catch up after a SQL stall instead of replaying its entire duration.
+                # catch up after a sql stall instead of replaying its entire duration
                 interval = min(0.2, arrived - previous[2]) / len(views)
             if generation != self._generation:
                 continue
@@ -114,7 +111,7 @@ class Presenter:
         try:
             return await asyncio.shield(job)
         except asyncio.CancelledError:
-            # Another game can reuse the same model as soon as this worker exits.
+            # the next game may reuse this model before the worker thread exits
             await job
             raise
 
@@ -128,7 +125,7 @@ class Presenter:
         if current.yaw is not None and confirmed_yaw is not None:
             offset = _clamp_turn(math.remainder(confirmed_yaw - current.yaw, math.tau))
             for turn in turns:
-                # Capping each step lets a reversal move the camera immediately.
+                # clamp each step so a reversal takes effect immediately
                 offset = _clamp_turn(offset + turn)
         milliradians = round(1000 * offset)
         if current is not self._current or milliradians != self._turn:

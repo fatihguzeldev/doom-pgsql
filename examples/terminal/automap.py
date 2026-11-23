@@ -1,8 +1,6 @@
-"""North-up terminal map of the current SQL level."""
-
 import math
 
-# One Braille character holds two columns of four map dots.
+# one braille character holds two columns of four map dots
 UNITS_PER_DOT = 24
 _DOTS = ((1, 8), (2, 16), (4, 32), (64, 128))
 _HEADINGS = "→↗↑↖←↙↓↘"
@@ -19,7 +17,6 @@ _RESET_FG = "\x1b[39m"
 
 
 def _line_dots(x0, y0, x1, y1, left, top, right, bottom):
-    # Step along the longer axis, restricted to the visible part even for very long walls.
     if (
         max(x0, x1) < left
         or min(x0, x1) > right

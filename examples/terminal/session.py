@@ -1,5 +1,3 @@
-"""Drive the SQL simulation and read its world frames from independent connections."""
-
 import asyncio
 import hashlib
 from collections import deque
@@ -114,7 +112,7 @@ class Frames:
             source = "doom.poll_frame_low(%s,%s,%s,%s)"
         else:
             source = "doom.poll_frame(%s,%s,%s,%s)"
-        # Read the HUD and the world from the same database snapshot.
+        # keep the hud and world in the same database snapshot
         result = await game_query(
             db,
             one_way_delay,
@@ -196,7 +194,7 @@ class Session:
                             batch.append(await self.pending.get())
                         while not self.pending.empty():
                             batch.append(self.pending.get_nowait())
-                        # Reuse the same first tic and payload after an uncertain commit.
+                        # retry the same tic range if the commit outcome is unknown
                         await game_query(
                             db,
                             self.one_way_delay,

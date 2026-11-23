@@ -25,7 +25,7 @@ GAME_KEYS = {"w", "s", "a", "d", "j", "l", "e", " ", "r", *ARROWS.values()}
 CONTROL_KEYS = GAME_KEYS | {"enter", "esc", "q"}
 SEQUENCE = re.compile(rb"\x1b(?:\[([0-?]*)([ -/]*)|O)([@-~])")
 ESC_DELAY = 0.05
-# Without key-up, a first tap can move until the OS's initial repeat delay expires.
+# terminals without key-up must bridge the initial repeat delay
 FIRST_REPEAT_LEASE = 0.55
 REPEAT_LEASE = 0.14
 TAP_HIGHLIGHT = 0.10
@@ -55,7 +55,6 @@ class Keyboard:
         self.auto_walk = False
 
     def lit_keys(self, now):
-        """Return physical controls held or briefly lit after a tap."""
         return frozenset(key for key, (held, until) in self._lights.items() if held or now < until)
 
     def _active(self, now):
@@ -68,7 +67,7 @@ class Keyboard:
         return 0.09 * (left - right)
 
     def pending_turn(self, now):
-        # Preview a fresh press even while SQL is preventing the next input sample.
+        # sql backpressure can delay the next input sample
         if self._taps.isdisjoint(("j", "left", "l", "right")):
             return 0.0
         return self._turn(self._active(now))

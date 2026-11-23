@@ -1,5 +1,3 @@
-"""Keyboard byte-stream tests. Run with python -m unittest discover -s tests -p terminal_keyboard.py."""
-
 import asyncio
 import unittest
 

@@ -27,7 +27,6 @@ SMALL_LOGO = (
     ("█ █ █ █ █ █ █ ▀ █", " ▀ ", "█▀▀ █ █ ▀▀█ █ █ █  "),
     ("▀▀  ▀▀▀ ▀▀▀ ▀   ▀", "   ", "▀   ▀▀▀ ▀▀▀ ▀▀▙ ▀▀▀"),
 )
-# The abrupt dark band gives the lettering a chrome horizon.
 BRONZE = ("#ffdcac", "#efa36f", "#87415a", "#e06f55", "#ffbd75")
 STEEL = ("#c8fbff", "#80d7e8", "#47447a", "#6788cf", "#b5b4ff")
 GLINT = "\x1b[38;2;255;246;218m"
@@ -68,7 +67,6 @@ def _ansi_rgb(rgb):
 
 
 def _image_rows(picture, width, height):
-    # Each terminal cell displays two samples, one above the other.
     xs = [(2 * x + 1) * picture.width // (2 * width) for x in range(width)]
     rgb, alpha = picture.rgb, picture.alpha
     result = []
@@ -169,7 +167,6 @@ def _draw_logo(page, logo, y, phase):
         page.put(x, y + i, lettering)
     if logo is not LOGO:
         return
-    # Half-block samples form a pair of mirrored copper sine waves.
     wing = min(22, (page.space - width) // 2 - 2 - travel)
     if wing < 6:
         return
@@ -306,7 +303,7 @@ class Display:
         return self._rendered
 
     def _full_status_bar(self, world, cols, rows):
-        # Half-block cells provide one pixel across and two pixels down.
+        # half-block cells provide one pixel across and two pixels down
         return (
             self.art is not None and self.art.has_status_bar
             and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200

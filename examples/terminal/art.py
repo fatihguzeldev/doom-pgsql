@@ -1,5 +1,3 @@
-"""Classic Doom graphics and pistol sound for the terminal client."""
-
 import re
 import struct
 from dataclasses import dataclass
@@ -22,7 +20,7 @@ def _palette_colors(palette):
 
 
 def world_image(frame, palette):
-    """Decode the SQL renderer's column-major pixels into a row-major RGB image."""
+    # sql pixels arrive in column-major order
     w, h = frame["width"], frame["height"]
     pixels, shades = frame["pixels"], frame["shades"]
     colors = _palette_colors(palette)
@@ -62,7 +60,7 @@ def _patch(data, palette):
         if pos < header:
             return None
         previous_y = -1
-        # Offsets can share a column. Bound scans of repeated empty posts in malformed patches.
+        # cap repeated empty posts when patch columns share offsets
         limit = min(len(data), pos + 8 * h + 5)
         while pos < limit and data[pos] != 255:
             if pos + 4 > limit:
@@ -92,7 +90,7 @@ def _pistol_wav(data):
     fmt, rate, size = struct.unpack_from("<HHI", data)
     if fmt != 3 or rate == 0 or not 48 < size <= len(data) - 8:
         return None
-    # DMX leaves 16 padding samples at each end of a Doom sound lump.
+    # dmx leaves 16 padding samples at each end of a doom sound lump
     pcm = bytes(data[24 : 8 + size - 16])
     pad = b"\0" * (len(pcm) % 2)
     header = struct.pack("<IHHIIHH", 16, 1, 1, rate, rate, 1, 8)
@@ -101,7 +99,6 @@ def _pistol_wav(data):
 
 
 def _opaque_runs(image, x, y, width, height, bottom):
-    """Sample a patch placed in Doom's 320 by 200 coordinate space."""
     x -= image.left
     y -= image.top
     x0 = max(0, (x * width + 319) // 320)
@@ -206,7 +203,6 @@ class Art:
         if key != self._overlay_key:
             runs = []
             if health > 0:
-                # The weapon origin is offset from the center of the world viewport.
                 origin = view_h // 2 - 100 + 32
                 weapon = self._images.get(gun) or self._images.get("PISGA0")
                 if weapon is not None:

@@ -1,5 +1,3 @@
-"""Play, pause and reload a fresh game through a PTY in an installed test database."""
-
 import os
 import pty
 import re
@@ -62,7 +60,6 @@ def resize_game(tty, rows, cols):
     termios.tcsetwinsize(tty.fd, (rows, cols))
     tty.until(rb"\x1b\[2J")
     redraw = tty.until(rb"\x1b\[0m")
-    # Each positioned run must end inside the new viewport.
     spans = re.split(rb"\x1b\[(\d+);(\d+)H", redraw)[1:]
     visible = []
     for row, column, run in zip(spans[::3], spans[1::3], spans[2::3]):
@@ -110,7 +107,7 @@ def run():
             tty.until(b"PAUSED")
             tty.until(b"Resume")
 
-            # A command can still be in flight when the menu opens.
+            # a command can still be in flight when the menu opens
             def tic():
                 return db.execute("SELECT tic FROM doom.games WHERE id=%s", (game,)).fetchone()[0]
 
@@ -128,7 +125,7 @@ def run():
             while tic() <= paused:
                 assert time.monotonic() < end, "resume did not restart SQL tics"
                 time.sleep(0.02)
-            # Q must restore the terminal even when the next tic is blocked in SQL.
+            # quit must restore the terminal even when the next tic is blocked in sql
             with db.transaction():
                 db.execute("SELECT id FROM doom.games WHERE id=%s FOR UPDATE", (game,))
                 time.sleep(0.1)
@@ -144,7 +141,6 @@ def run():
             tty.until(f"Loading game #{game}".encode())
             tty.until(b"AMMO 49")
 
-            # Give this player inventory and activate the Hangar's normal exit switch.
             with db.transaction():
                 db.execute("UPDATE doom.games SET armor=25,keys=1 WHERE id=%s", (game,))
                 db.execute("UPDATE doom.actors SET health=87 WHERE game=%s AND id=-1", (game,))

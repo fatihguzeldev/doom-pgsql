@@ -1,5 +1,3 @@
-"""Play SQL Doom in a truecolor terminal."""
-
 import argparse
 import asyncio
 import math
@@ -11,7 +9,6 @@ from time import monotonic
 
 import psycopg
 
-# Support both python examples/terminal/play.py and python -m examples.terminal.play.
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -39,7 +36,6 @@ async def first(*coroutines):
 
 
 async def menu(keys, display, title, items, *, picture=None, adjust=None):
-    """Return the selected row, or None on Escape."""
     keys.set_menu(True)
     selected = 0
     last = None
@@ -281,7 +277,7 @@ def local_rtt_ms(dsn, override):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
     parser.add_argument("--dsn", help="PostgreSQL connection string (or use PG* environment variables)")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--wad", type=Path, help="use a classic WAD (default: bundled shareware)")

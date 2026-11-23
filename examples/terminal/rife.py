@@ -1,5 +1,3 @@
-"""Interpolate SQL frames and expand their pixels onto Doom's 320×200 canvas."""
-
 import hashlib
 import os
 import shutil
@@ -76,7 +74,7 @@ class Rife:
         )
 
     def _tensor(self, rgb):
-        # This RIFE export requires both dimensions to be multiples of 64.
+        # the model requires dimensions divisible by 64
         h, w = rgb.shape[:2]
         padded = self._np.pad(rgb, ((0, -h % 64), (0, -w % 64), (0, 0)), mode="edge")
         return padded.transpose(2, 0, 1)[None].astype(self._np.float32) / 255
@@ -96,7 +94,7 @@ class Rife:
         left, right = padded[1:-1, :-2], padded[1:-1, 2:]
         bend = (top != bottom).any(axis=2) & (left != right).any(axis=2)
 
-        # Scale2x's corner rule, limited to three samples of each 5×5 block.
+        # scale2x's corner rule, limited to three samples of each 5×5 block
         for y, inner_y, vertical in ((0, 1, top), (4, 3, bottom)):
             for x, inner_x, horizontal in ((0, 1, left), (4, 3, right)):
                 corner = (bend & (vertical == horizontal).all(axis=2))[..., None]

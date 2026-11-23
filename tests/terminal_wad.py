@@ -1,5 +1,3 @@
-"""Test SQL edits and terminal input on E1M3."""
-
 import argparse
 import fcntl
 import os
@@ -31,7 +29,6 @@ def run(wad):
     with psycopg.connect(autocommit=True) as editor, psycopg.connect(autocommit=True) as observer:
         level = editor.execute("SELECT doom.load_wad(%s,'E1M3')", (wad.read_bytes(),)).fetchone()[0]
         game, epoch, _ = editor.execute("SELECT * FROM doom.new_game(%s)", (level,)).fetchone()
-        # Retry both tics after the first commits.
         cmds = [[1, 0, 0, False, False], [0, 0, 0.2, False, False]]
         editor.execute("CALL doom.submit(%s,%s,1,%s)", (game, epoch, Jsonb(cmds[:1])))
         editor.execute("CALL doom.submit(%s,%s,1,%s)", (game, epoch, Jsonb(cmds)))
@@ -92,6 +89,6 @@ def run(wad):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Test SQL edits and terminal input on E1M3.")
     parser.add_argument("wad", type=Path)
     run(parser.parse_args().wad)
