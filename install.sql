@@ -14,11 +14,13 @@ CREATE SCHEMA doom;
 \ir engine/simulation/actions.sql
 \ir engine/simulation/tick.sql
 \ir engine/simulation/submit.sql
+\ir engine/render/catalog.sql
 \ir engine/render/portals.sql
 \ir engine/render/walls.sql
 \ir engine/render/planes.sql
 \ir engine/render/raster.sql
 \ir engine/render/palette.sql
+\ir engine/render/scenes.sql
 \ir engine/render/poll.sql
 \ir engine/render/cache.sql
 COMMIT;

@@ -1,4 +1,3 @@
-CREATE TYPE doom.tile AS (w int,h int,pixels bytea,mask bytea,stretched bytea,quads bytea,quad_start int,column_ids int[],posts doom.sprite_posts);
 CREATE FUNCTION doom.sprite_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8,far_z float8)
 RETURNS SETOF doom.stroke LANGUAGE sql STABLE AS $$
     WITH visible_actors AS MATERIALIZED (
