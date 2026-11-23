@@ -1,0 +1,185 @@
+CREATE TYPE doom.projection AS (
+    wall doom.edge, lo int, hi int, z0 float8, r0 float8, dz float8, dr float8, k float8,
+    inv0 float8, inv_step float8
+);
+CREATE TYPE doom.aperture AS (sector int, lo int, hi int, entry int, inv0 float8, inv_step float8);
+
+-- Sweep angular events. Between projected endpoints the nearest edge changes
+-- only where two affine inverse-depth functions cross.
+CREATE FUNCTION doom.visible(mesh doom.edge[],win doom.aperture,eye point,fx float8,fy float8)
+RETURNS SETOF doom.projection LANGUAGE plpgsql IMMUTABLE STRICT ROWS 4 AS $$
+DECLARE
+    e doom.edge;
+    line doom.projection;
+    candidates doom.projection[] := '{}';
+    nearest doom.projection;
+    d point;
+    z1 float8; r1 float8; left_r float8; right_r float8;
+    at_x int; until_x int; low_x int; high_x int; mid int;
+    eligible_left boolean; eligible_right boolean; eligible boolean;
+    inv float8; best float8; best_last float8;
+BEGIN
+    FOREACH e IN ARRAY mesh LOOP
+        CONTINUE WHEN e.line=win.entry OR (e.dest=win.sector AND e.mid_id IS NULL);
+        d:=e.a-eye;
+        line.z0:=d[0]*fx+d[1]*fy; line.r0:=d[0]*fy-d[1]*fx;
+        line.dz:=e.dx*fx+e.dy*fy; line.dr:=e.dx*fy-e.dy*fx;
+        z1:=line.z0+line.dz; r1:=line.r0+line.dr;
+        CONTINUE WHEN greatest(line.z0,z1)<0.001 OR greatest(line.z0+line.r0,z1+r1)<0
+            OR greatest(line.z0-line.r0,z1-r1)<0;
+        line.k:=line.z0*line.dr-line.r0*line.dz;
+        CONTINUE WHEN line.k<=0;
+        left_r:=CASE WHEN line.z0>=0.001 THEN line.r0/line.z0 ELSE (line.r0+(0.001-line.z0)*line.dr/line.dz)/0.001 END;
+        right_r:=CASE WHEN z1>=0.001 THEN r1/z1 ELSE (r1+(0.001-z1)*line.dr/line.dz)/0.001 END;
+        line.lo:=greatest(win.lo,least(160,ceil(79.5+80*left_r))::int);
+        line.hi:=least(win.hi,greatest(-1,ceil(79.5+80*right_r)-1)::int);
+        CONTINUE WHEN line.lo>line.hi;
+        line.inv0:=(line.dr+79.5/80*line.dz)/line.k;
+        line.inv_step:=-line.dz/(80*line.k);
+        IF win.entry>=0 THEN
+            eligible_left:=(line.inv0+line.lo*line.inv_step,-e.line)<(win.inv0+line.lo*win.inv_step,-win.entry);
+            eligible_right:=(line.inv0+line.hi*line.inv_step,-e.line)<(win.inv0+line.hi*win.inv_step,-win.entry);
+            CONTINUE WHEN NOT eligible_left AND NOT eligible_right;
+            IF eligible_left<>eligible_right THEN
+                low_x:=line.lo; high_x:=line.hi;
+                WHILE high_x-low_x>1 LOOP
+                    mid:=(low_x+high_x)/2;
+                    eligible:=(line.inv0+mid*line.inv_step,-e.line)<(win.inv0+mid*win.inv_step,-win.entry);
+                    IF eligible=eligible_left THEN low_x:=mid; ELSE high_x:=mid; END IF;
+                END LOOP;
+                IF eligible_left THEN line.hi:=low_x; ELSE line.lo:=high_x; END IF;
+            END IF;
+        END IF;
+        line.wall:=e;
+        candidates:=array_append(candidates,line);
+    END LOOP;
+    at_x:=win.lo;
+    WHILE at_x<=win.hi LOOP
+        until_x:=win.hi;
+        nearest:=NULL; best:=0;
+        FOREACH line IN ARRAY candidates LOOP
+            CONTINUE WHEN line.hi<at_x;
+            IF line.lo>at_x THEN until_x:=least(until_x,line.lo-1); CONTINUE; END IF;
+            until_x:=least(until_x,line.hi);
+            inv:=line.inv0+at_x*line.inv_step;
+            IF inv>best OR (inv=best AND (line.wall).line<(nearest.wall).line) THEN nearest:=line; best:=inv; END IF;
+        END LOOP;
+        IF nearest.lo IS NOT NULL THEN
+            best_last:=nearest.inv0+until_x*nearest.inv_step;
+            FOREACH line IN ARRAY candidates LOOP
+                CONTINUE WHEN line.lo>at_x OR line.hi<at_x OR (line.wall).line=(nearest.wall).line;
+                IF (line.inv0+until_x*line.inv_step,-(line.wall).line)>(best_last,-(nearest.wall).line) THEN
+                    low_x:=at_x; high_x:=until_x;
+                    WHILE high_x-low_x>1 LOOP
+                        mid:=(low_x+high_x)/2;
+                        IF (line.inv0+mid*line.inv_step,-(line.wall).line)>
+                           (nearest.inv0+mid*nearest.inv_step,-(nearest.wall).line) THEN high_x:=mid; ELSE low_x:=mid; END IF;
+                    END LOOP;
+                    until_x:=low_x; best_last:=nearest.inv0+until_x*nearest.inv_step;
+                END IF;
+            END LOOP;
+            nearest.lo:=at_x; nearest.hi:=until_x;
+            RETURN NEXT nearest;
+        END IF;
+        at_x:=until_x+1;
+    END LOOP;
+END;
+$$;
+
+CREATE TYPE doom.room AS (z_floor float8,z_ceil float8,light int,floor_id int,ceil_id int,sky boolean);
+CREATE TYPE doom.stroke AS (
+    x int,y0 int,y1 int,kind int,art int,u float8,v float8,dv float8,depth float8,light int
+);
+-- kind 0 plane (v is world height), 1 solid column, 2 sky, 3 masked column.
+CREATE FUNCTION doom.world_strokes(p bigint,g bigint,body doom.actors,fx float8,fy float8)
+RETURNS SETOF doom.stroke LANGUAGE plpgsql STABLE STRICT AS $$
+DECLARE
+    queue doom.aperture[]:=ARRAY[ROW(body.sector,0,159,-1,0,0)::doom.aperture];
+    tail int:=1;
+    win doom.aperture;
+    wall doom.projection;
+    e doom.edge;
+    edges doom.edge[];
+    rooms doom.room[];
+    front doom.room;
+    back doom.room;
+    top_clip int[]:=array_fill(0,ARRAY[160],ARRAY[0]);
+    bottom_clip int[]:=array_fill(100,ARRAY[160],ARRAY[0]);
+    open_bits bit(160):=repeat('1',160)::bit(160);
+    eye float8:=body.z+41;
+    inverse float8; depth float8; scale float8; dv float8; u float8;
+    top_y int; bottom_y int; top_open int; bottom_open int;
+    open_from int; low_z float8; high_z float8; origin_z float8; texture_h int;
+    y0 int; y1 int;
+BEGIN
+    SELECT array_agg(CASE WHEN s.id IS NOT NULL THEN ROW(coalesce(m.floor_z,s.floor_z),coalesce(m.ceiling_z,s.ceiling_z),
+        s.light,b.floor_id,b.ceiling_id,b.sky)::doom.room END ORDER BY i) INTO rooms
+    FROM generate_series(0,(SELECT max(id) FROM doom.sectors WHERE level=p)) i
+    LEFT JOIN doom.sectors s ON s.level=p AND s.id=i
+    LEFT JOIN doom.mesh b ON b.level=p AND b.sector=i LEFT JOIN doom.movers m ON m.game=g AND m.sector=i;
+    WHILE tail>0 LOOP
+        win:=queue[tail]; tail:=tail-1;
+        CONTINUE WHEN position(B'1' IN substring(open_bits FROM win.lo+1 FOR win.hi-win.lo+1))=0;
+        SELECT m.edges INTO edges FROM doom.mesh m WHERE m.level=p AND m.sector=win.sector;
+        front:=rooms[1+win.sector];
+        FOR wall IN SELECT * FROM doom.visible(edges,win,body.pos,fx,fy) LOOP
+            e:=wall.wall; back:=rooms[1+e.dest]; open_from:=NULL;
+            low_z:=greatest(front.z_floor,back.z_floor); high_z:=least(front.z_ceil,back.z_ceil);
+            FOR x IN wall.lo..wall.hi LOOP
+                y0:=top_clip[x]; y1:=bottom_clip[x];
+                IF y0<y1 THEN
+                    inverse:=wall.inv0+x*wall.inv_step; depth:=1/inverse; scale:=80*inverse; dv:=depth/80;
+                    u:=e.u+e.len*greatest(0,least(1,((x-79.5)/80*wall.z0-wall.r0)/(inverse*wall.k)));
+                    top_y:=greatest(y0,least(y1,ceil(49.5+(eye-front.z_ceil)*scale)::int));
+                    bottom_y:=greatest(top_y,least(y1,ceil(49.5+(eye-front.z_floor)*scale)::int));
+                    IF y0<top_y THEN
+                        IF front.sky THEN RETURN NEXT (x,y0,top_y,2,front.ceil_id,
+                            (body.yaw-atan((x-79.5)/80))*512/pi(),0,1,depth,255)::doom.stroke;
+                        ELSE RETURN NEXT (x,y0,top_y,0,front.ceil_id,0,front.z_ceil,0,depth,front.light)::doom.stroke; END IF;
+                    END IF;
+                    IF bottom_y<y1 THEN RETURN NEXT (x,bottom_y,y1,0,front.floor_id,0,front.z_floor,0,depth,front.light)::doom.stroke; END IF;
+                    IF e.dest IS NULL THEN
+                        IF top_y<bottom_y THEN
+                            origin_z:=front.z_ceil;
+                            IF (e.flags&16)<>0 THEN
+                                SELECT h INTO texture_h FROM doom.art WHERE id=e.mid_id;
+                                origin_z:=front.z_floor+coalesce(texture_h,0);
+                            END IF;
+                            RETURN NEXT (x,top_y,bottom_y,1,e.mid_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
+                        END IF;
+                        top_clip[x]:=100; open_bits:=set_bit(open_bits,x,0);
+                    ELSE
+                        bottom_open:=greatest(top_y,least(bottom_y,ceil(49.5+(eye-low_z)*scale)::int));
+                        top_open:=CASE WHEN front.sky AND back.sky AND low_z<high_z THEN top_y ELSE
+                            greatest(top_y,least(bottom_open,ceil(49.5+(eye-high_z)*scale)::int)) END;
+                        IF top_y<top_open THEN
+                            origin_z:=front.z_ceil;
+                            IF (e.flags&8)=0 THEN SELECT h INTO texture_h FROM doom.art WHERE id=e.upper_id;
+                                origin_z:=back.z_ceil+coalesce(texture_h,0); END IF;
+                            RETURN NEXT (x,top_y,top_open,1,e.upper_id,u,e.v+origin_z-eye+(top_y-49.5)*dv,dv,depth,front.light)::doom.stroke;
+                        END IF;
+                        IF bottom_open<bottom_y THEN
+                            origin_z:=CASE WHEN (e.flags&16)<>0 THEN front.z_ceil ELSE back.z_floor END;
+                            RETURN NEXT (x,bottom_open,bottom_y,1,e.lower_id,u,e.v+origin_z-eye+(bottom_open-49.5)*dv,dv,depth,front.light)::doom.stroke;
+                        END IF;
+                        IF e.mid_id IS NOT NULL AND top_open<bottom_open THEN
+                            origin_z:=high_z;
+                            IF (e.flags&16)<>0 THEN SELECT h INTO texture_h FROM doom.art WHERE id=e.mid_id; origin_z:=low_z+texture_h; END IF;
+                            RETURN NEXT (x,top_open,bottom_open,3,e.mid_id,u,e.v+origin_z-eye+(top_open-49.5)*dv,dv,depth,front.light)::doom.stroke;
+                        END IF;
+                        top_clip[x]:=top_open; bottom_clip[x]:=bottom_open;
+                        IF top_open=bottom_open THEN open_bits:=set_bit(open_bits,x,0); END IF;
+                    END IF;
+                END IF;
+                IF e.dest IS NOT NULL AND top_clip[x]<bottom_clip[x] THEN open_from:=coalesce(open_from,x); END IF;
+                IF open_from IS NOT NULL AND (x=wall.hi OR top_clip[x]>=bottom_clip[x]) THEN
+                    tail:=tail+1;
+                    queue[tail]:=(e.dest,open_from,CASE WHEN top_clip[x]<bottom_clip[x] THEN x ELSE x-1 END,
+                        e.line,wall.inv0,wall.inv_step)::doom.aperture;
+                    open_from:=NULL;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END LOOP;
+END;
+$$;
