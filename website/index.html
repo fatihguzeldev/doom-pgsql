@@ -7,13 +7,16 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body class="home">
+    <header class="site-header">
+      <h1 class="site-brand"><img src="assets/logo.png" width="672" height="98" alt="doom-pgsql"></h1>
+      <a class="site-source" href="https://github.com/fatihguzeldev/doom-pgsql">github</a>
+    </header>
     <main class="book-home">
-      <h1 class="visually-hidden">doomsql</h1>
       <figure class="opening-frame">
         <img src="assets/frame.png" width="160" height="100" alt="a first-person game frame rendered by postgres">
         <figcaption>postgres drew this frame</figcaption>
       </figure>
-      <p class="opening-line">i rewrote doom’s engine in sql to see if i could make it playable on planetscale’s $5 postgres plan.</p>
+      <p class="opening-line">i rewrote doom’s engine in sql to see if i could make it playable on <a href="https://planetscale.com/">planetscale</a>’s $5 postgres plan.</p>
       <nav class="chapter-index" aria-labelledby="chapters">
         <h2 id="chapters">chapters</h2>
         <ol class="chapter-list">
@@ -23,9 +26,6 @@
           <li><a href="chapters/04/"><span class="chapter-number">4</span> <span class="chapter-title">dlss (kinda)</span></a></li>
         </ol>
       </nav>
-      <footer class="book-signature">
-        <img src="assets/logo.png" width="672" height="98" alt="">
-      </footer>
     </main>
   </body>
 </html>
