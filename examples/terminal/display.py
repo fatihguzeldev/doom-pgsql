@@ -311,7 +311,8 @@ class Display:
                 and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200)
 
     def paint(
-        self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset()
+        self, world, status, turn=0.0, fps=0.0, shot_age=None, *, sql_fps=None, phase=0, lit_keys=frozenset(),
+        automap=None, pose=None,
     ):
         page = _Page()
         logo = _logo(page)
@@ -323,14 +324,31 @@ class Display:
         below_fps = int(page.height >= 18)
         header = len(logo) + above_fps + 1 + below_fps
         reserve = max(header, footer)
-        cols, rows = _fit_image(
-            world.width, world.height, page.space, max(1, page.height - 2 * reserve)
-        )
+        if automap is None or pose is None:
+            usable = max(1, page.height - 2 * reserve)
+        else:
+            usable = max(1, page.height - header - footer)
+        has_map = automap is not None and pose is not None and usable >= 4 and page.space >= 24
+        side = has_map and (page.space >= 54 or (usable < 10 and page.space >= 35))
+        map_width = map_height = 0
+        room_w, room_h = page.space, usable
+        if side:
+            map_width = min(32, max(12, page.space // 4))
+            room_w -= map_width + 2
+        elif has_map and usable >= 9:
+            map_width = min(page.space, 32)
+            map_height = min(7, usable // 3)
+            room_h -= map_height + 1
+        cols, rows = _fit_image(world.width, world.height, room_w, room_h)
         if not cols:
             self._present(page)
             return
-        x = (page.width - cols) // 2
-        y = (page.height - rows) // 2
+        if side:
+            map_height = min(max(3, map_width // 2), rows - 1)
+        below_map = map_height + 1 if map_height and not side else 0
+        x = (page.width - cols - (map_width + 2 if side else 0)) // 2
+        y = ((page.height - rows) // 2 if not has_map
+             else header + (usable - rows - below_map) // 2)
         _draw_logo(page, logo, y - header, phase)
         readout = f"FPS {fps:.1f}"
         if sql_fps is not None:
@@ -343,6 +361,13 @@ class Display:
         for i, row in enumerate(self._game_rows(world, status, turn, shot_age, cols, rows)):
             page.put(x, y + i, row)
         below = y + rows
+        if map_height > 0:
+            mx = x + cols + 2 if side else (page.width - map_width) // 2
+            my = y + (rows - map_height - 1) // 2 if side else below + 1
+            title = "AUTOMAP" + " " * (map_width - 10) + "N ↑"
+            page.put(mx, my, VIOLET + title)
+            for i, row in enumerate(automap.rows(*pose, map_width, map_height), 1):
+                page.put(mx, my + i, row)
         hud = f"HP {status.get('health', 0)}%   ARM {status.get('armor', 0)}%   AMMO {status.get('ammo', 0)}"
         keys = [
             label for bit, label in ((1, "Blue"), (2, "Yellow"), (4, "Red")) if status.get("keys", 0) & bit
@@ -351,7 +376,7 @@ class Display:
             hud += "   KEYS " + "/".join(keys)
         if not self._full_status_bar(world, cols, rows):
             page.centered(below, hud, GOLD)
-        below += 1
+        below += 1 + below_map
         if page.height >= 28:
             below += 1
         for i, (used, line) in enumerate(controls):

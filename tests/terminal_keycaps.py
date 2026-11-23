@@ -6,6 +6,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from examples.terminal.art import Image
+from examples.terminal.automap import Automap
 from examples.terminal.display import (
     KEY_AMBER,
     KEY_CYAN,
@@ -35,6 +36,27 @@ STATUS = {"map": "E1M1", "game": 1, "health": 100, "armor": 0, "ammo": 50}
 
 
 class KeycapsTest(unittest.TestCase):
+    def test_automap_sits_outside_the_view_and_hud(self):
+        automap = Automap([(-48, -48, 48, -48, "wall")])
+        for width, height in ((42, 27), (60, 20), (80, 24), (144, 44)):
+            display = Display()
+            with self.subTest(size=(width, height)), patch(
+                "shutil.get_terminal_size", return_value=os.terminal_size((width, height))
+            ), redirect_stdout(io.StringIO()):
+                display.paint(WORLD, STATUS, automap=automap, pose=(0, 0, 0))
+                plain = []
+                for row in display._previous:
+                    right = 0
+                    for x, styled in sorted(row):
+                        text = SGR.sub("", styled)
+                        self.assertGreaterEqual(x, right)
+                        right = x + _cells(text)
+                        self.assertLessEqual(right, width)
+                        plain.append(text)
+                self.assertTrue(any("AUTOMAP" in s for s in plain))
+                self.assertTrue(any(s.strip() == "→" for s in plain))
+                self.assertTrue(any("HP 100%" in s and "AMMO 50" in s for s in plain))
+
     def test_physical_keys_and_combinations(self):
         pressed = {"w", "a", "right", "l", " ", "e"}
         for width in (58, 78, 114):

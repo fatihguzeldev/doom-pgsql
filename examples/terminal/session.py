@@ -10,6 +10,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .art import world_image
+from .automap import Automap
 from .presentation import Presenter
 
 
@@ -89,6 +90,7 @@ async def open_game(args, wad, level=None, previous_game=None):
         state = await result.fetchone()
         if state is None:
             raise ValueError(f"Game {game} does not exist")
+        state["automap"] = await Automap.load(db, state["level"])
         return state
 
 
@@ -165,6 +167,7 @@ class Session:
         self.frames = Frames(state, args.delta, low_resolution=engine is not None)
         self.presenter = Presenter(engine) if engine is not None else None
         self.world = None
+        self.pose = None
         self.active = asyncio.Event()
         self.active.set()
         self.pending = asyncio.Queue(maxsize=2)
@@ -232,6 +235,7 @@ class Session:
                         if packet is None:
                             continue
                         now = monotonic()
+                        self.pose = (packet["camera_x"], packet["camera_y"], packet["yaw"])
                         if changed:
                             self._arrivals.append(now)
                             self.world = world_image(self.frames.frame, self.frames.palette)

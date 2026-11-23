@@ -161,6 +161,8 @@ async def play_session(session, display, keys, maps, started):
                 turn,
                 presenter.fps(now) if presenter is not None else session.fps(now),
                 sql_fps=session.fps(now) if presenter is not None else None,
+                automap=session.state.get("automap"),
+                pose=session.pose,
                 shot_age=age,
                 phase=int(now * LOGO_HZ),
                 lit_keys=keys.lit_keys(now),
