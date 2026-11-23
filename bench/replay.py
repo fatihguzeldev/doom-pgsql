@@ -165,33 +165,22 @@ def main():
         help="add half the delay before each request and half after its response",
     )
     args = parser.parse_args()
-    if args.seconds <= 0 or args.rtt_ms < 0:
-        parser.error("duration must be positive and RTT nonnegative")
+    if not 0 < args.seconds < math.inf or not 0 <= args.rtt_ms < math.inf:
+        parser.error("duration and RTT must be finite, with duration > 0 and RTT >= 0")
     with psycopg.connect(args.dsn, autocommit=True) as c:
-        level = (
-            args.level
-            or c.execute(
+        level = args.level
+        if args.wad is not None:
+            level = c.execute(
                 "SELECT doom.load_wad(%s,%s)",
                 (args.wad.read_bytes(), "E1M1" if args.hangar_exit else args.map),
             ).fetchone()[0]
-        )
         game = c.execute(
             "SELECT game_id FROM doom.new_game(%s,%s)",
             (level, 1 if args.hangar_exit else 3),
         ).fetchone()[0]
-    print(
-        json.dumps(
-            measure(
-                args.dsn,
-                game,
-                args.seconds,
-                args.rtt_ms,
-                args.container,
-                hangar_commands() if args.hangar_exit else None,
-            ),
-            indent=2,
-        )
-    )
+    commands = hangar_commands() if args.hangar_exit else None
+    result = measure(args.dsn, game, args.seconds, args.rtt_ms, args.container, commands)
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
