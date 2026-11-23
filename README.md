@@ -6,7 +6,9 @@ doom, but the engine is rewritten in sql.
 ./play
 ```
 
-hit `enter` for e1m7 (computer station), or pick a map and difficulty with the arrow keys. the shareware wad is included.
+press `enter` for e1m7 (computer station), where we saw our highest fps. the bundled shareware wad includes e1m1 through e1m9. use the arrow keys to change the map or difficulty.
+
+postgres prepares a map the first time you play it and keeps it for later games. e1m7 took about 30 seconds to prepare with the default cpu limit.
 
 ## controls
 
@@ -17,7 +19,7 @@ move with `wasd`. turn with `←` and `→` or `j` and `l`. press `space` to fir
 | flag | use |
 | --- | --- |
 | `--wad doom2.wad` | load a wad with its own maps and textures |
-| `--map e1m1` | start on a specific map |
+| `--map e1m1` | preselect a map by name |
 | `--skill 3` | choose a difficulty from 1 to 5 (default 3) |
 | `--game 1` | resume a saved game by id |
 | `--dsn <connection>` | play on an existing postgres database with the engine installed |
