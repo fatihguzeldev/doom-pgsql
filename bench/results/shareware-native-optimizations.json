@@ -1,0 +1,287 @@
+{
+  "postgresql": "17.12, Linux arm64, local Docker",
+  "cpu_quota_us": 6250,
+  "cpu_period_us": 100000,
+  "cpu_burst_us": 0,
+  "memory_bytes": 536870912,
+  "swap_bytes": 0,
+  "simulated_round_trip_ms": 50,
+  "native_dimensions": [
+    160,
+    100
+  ],
+  "iwad_md5": "f0cefca49926d00903cf57551d901abe",
+  "reference_commit": "65c1a2a3255bcc8e435c79608260230c5f2bdb94",
+  "candidate_engine_commit": "645ec620fe13a9dd091391e11432c81598cf710c",
+  "harness_commit": "1e5d9ba95297847c324eb21d239845844ffcc868",
+  "replay_commands": [
+    "bench/ps5.sh /path/to/doom1.wad 60 E1M3",
+    "bench/ps5.sh /path/to/doom1.wad 180 E1M1"
+  ],
+  "metric": "Number of distinct SQL pixel and shade buffer pairs received before the deadline divided by elapsed time. Renderer and simulation run concurrently.",
+  "workloads": {
+    "E1M3": {
+      "route": "60 seconds at skill 3",
+      "skill": 3,
+      "reference_runs": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1300.255,
+            "reader": 2353.733
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 1275,
+          "tics_per_s": 21.25,
+          "sql_frames": 200,
+          "unique_images": 194,
+          "unique_fps": 3.2333333333333334,
+          "reused": 29,
+          "median_frame_request_ms": 234.97250024229288,
+          "median_input_batch_ms": 607.1634162217379
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1353.547,
+            "reader": 2271.229
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 844,
+          "tics_per_s": 14.066666666666666,
+          "sql_frames": 149,
+          "unique_images": 141,
+          "unique_fps": 2.35,
+          "reused": 9,
+          "median_frame_request_ms": 306.64899945259094,
+          "median_input_batch_ms": 1094.2969373427331
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1355.866,
+            "reader": 2291.562
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 881,
+          "tics_per_s": 14.683333333333334,
+          "sql_frames": 153,
+          "unique_images": 150,
+          "unique_fps": 2.5,
+          "reused": 24,
+          "median_frame_request_ms": 299.86212495714426,
+          "median_input_batch_ms": 998.0064583942294
+        }
+      ],
+      "candidate_runs": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1412.374,
+            "reader": 2260.18
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 940,
+          "tics_per_s": 15.666666666666666,
+          "sql_frames": 191,
+          "unique_images": 182,
+          "unique_fps": 3.033333333333333,
+          "reused": 28,
+          "median_frame_request_ms": 218.31720788031816,
+          "median_input_batch_ms": 1006.0915211215615
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1343.712,
+            "reader": 2315.681
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 1023,
+          "tics_per_s": 17.05,
+          "sql_frames": 208,
+          "unique_images": 198,
+          "unique_fps": 3.3,
+          "reused": 28,
+          "median_frame_request_ms": 205.2412498742342,
+          "median_input_batch_ms": 894.2489586770535
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1348.316,
+            "reader": 2307.246
+          },
+          "seconds": 60.0,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 929,
+          "tics_per_s": 15.483333333333333,
+          "sql_frames": 189,
+          "unique_images": 180,
+          "unique_fps": 3.0,
+          "reused": 38,
+          "median_frame_request_ms": 208.98441597819328,
+          "median_input_batch_ms": 910.3102926164865
+        }
+      ],
+      "reference_pooled": {
+        "elapsed_seconds": 180.0,
+        "distinct_frames_per_s": 2.694,
+        "acknowledged_tics_per_s": 16.667,
+        "reader_cpu_ms_per_distinct_frame_including_drain": 14.261
+      },
+      "candidate_pooled": {
+        "elapsed_seconds": 180.0,
+        "distinct_frames_per_s": 3.111,
+        "acknowledged_tics_per_s": 16.067,
+        "reader_cpu_ms_per_distinct_frame_including_drain": 12.291
+      }
+    },
+    "E1M1": {
+      "route": "Recorded 683-tic Hangar exit at skill 1, timed until the final acknowledgment.",
+      "skill": 1,
+      "reference_runs": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 2094.162,
+            "reader": 2586.506
+          },
+          "seconds": 76.21694025024772,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 8.961262388091999,
+          "sql_frames": 154,
+          "unique_images": 142,
+          "unique_fps": 1.8631028683880875,
+          "reused": 19,
+          "median_frame_request_ms": 396.248041652143,
+          "median_input_batch_ms": 1904.0262294001877
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 2487.965,
+            "reader": 2714.968
+          },
+          "seconds": 86.02324687503278,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 7.939714261102048,
+          "sql_frames": 123,
+          "unique_images": 115,
+          "unique_fps": 1.3368479356174752,
+          "reused": 16,
+          "median_frame_request_ms": 533.6610423400998,
+          "median_input_batch_ms": 1993.9370835199952
+        }
+      ],
+      "candidate_runs": [
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1569.922,
+            "reader": 2444.766
+          },
+          "seconds": 66.70646287500858,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 10.238887966219602,
+          "sql_frames": 117,
+          "unique_images": 109,
+          "unique_fps": 1.634024580260522,
+          "reused": 20,
+          "median_frame_request_ms": 444.069541990757,
+          "median_input_batch_ms": 1505.5170627310872
+        },
+        {
+          "backend_cpu_ms_including_drain": {
+            "writer": 1672.551,
+            "reader": 2385.193
+          },
+          "seconds": 66.5296265007928,
+          "artificial_rtt_ms": 50,
+          "acknowledged_tics": 683,
+          "tics_per_s": 10.26610302692532,
+          "sql_frames": 116,
+          "unique_images": 104,
+          "unique_fps": 1.5632133452419228,
+          "reused": 12,
+          "median_frame_request_ms": 411.7956249974668,
+          "median_input_batch_ms": 1405.096875037998
+        }
+      ],
+      "reference_pooled": {
+        "elapsed_seconds": 162.24,
+        "distinct_frames_per_s": 1.584,
+        "acknowledged_tics_per_s": 8.42,
+        "reader_cpu_ms_per_distinct_frame_including_drain": 20.628
+      },
+      "candidate_pooled": {
+        "elapsed_seconds": 133.236,
+        "distinct_frames_per_s": 1.599,
+        "acknowledged_tics_per_s": 10.252,
+        "reader_cpu_ms_per_distinct_frame_including_drain": 22.676
+      }
+    }
+  },
+  "earlier_candidate_run": {
+    "map": "E1M3",
+    "engine_commit": "1e5d9ba95297847c324eb21d239845844ffcc868",
+    "run": {
+      "backend_cpu_ms_including_drain": {
+        "writer": 1028.516,
+        "reader": 2166.785
+      },
+      "seconds": 60.0,
+      "artificial_rtt_ms": 50,
+      "acknowledged_tics": 2097,
+      "tics_per_s": 34.95,
+      "sql_frames": 548,
+      "unique_images": 497,
+      "unique_fps": 8.283333333333333,
+      "reused": 34,
+      "median_frame_request_ms": 66.54141610488296,
+      "median_input_batch_ms": 64.54260414466262
+    },
+    "context": "Recorded before the final edit-preservation fix. Separate verification work ran on the host. Excluded from the final pooled figures."
+  },
+  "frame_equivalence": {
+    "E1M1": {
+      "sample": "Every tic, including spawn.",
+      "frames_and_state_snapshots": 684,
+      "identical": true,
+      "sha256_of_concatenated_frame_sha256_digests": "051fcaf773b9186890c9c23e381782bc41a9e5fd0da04154e8d60fc8a69e42cc"
+    },
+    "E1M3": {
+      "sample": "Every tic, including spawn.",
+      "frames_and_state_snapshots": 1025,
+      "identical": true,
+      "sha256_of_concatenated_frame_sha256_digests": "7e2cf79aeb0ed52c367b1b7d5e829905faf42a1fe4858b92b5b261d14e80e0af"
+    }
+  },
+  "fixed_tic_timings": {
+    "method": "Elapsed milliseconds in synchronous SQL calls on the local development database without a CPU quota. Each map was played through the same tics with one full frame per tic including spawn, excluding state verification from these timings. One run per revision.",
+    "E1M3": {
+      "baseline": {
+        "ticks_ms": 642.8,
+        "frames_ms": 3363.04
+      },
+      "candidate": {
+        "ticks_ms": 588.18,
+        "frames_ms": 2650.0
+      }
+    },
+    "E1M1": {
+      "baseline": {
+        "ticks_ms": 750.48,
+        "frames_ms": 4003.98
+      },
+      "candidate": {
+        "ticks_ms": 562.07,
+        "frames_ms": 3768.36
+      }
+    }
+  },
+  "compiled_wall_storage_bytes": {
+    "method": "Sum of pg_column_size(quads) on the imported level.",
+    "E1M1": 5566464,
+    "E1M3": 9711616
+  }
+}
