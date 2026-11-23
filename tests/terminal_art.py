@@ -4,7 +4,7 @@ import unittest
 import wave
 from pathlib import Path
 
-from examples.terminal.art import Art, Image
+from client.art import Art, Image
 
 
 def wad(*lumps):

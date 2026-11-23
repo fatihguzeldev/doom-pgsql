@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from examples.terminal.keyboard import ESC_DELAY, Keyboard
+from client.keyboard import ESC_DELAY, Keyboard
 
 
 class KeyboardTest(unittest.IsolatedAsyncioTestCase):

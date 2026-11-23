@@ -2,7 +2,7 @@ import math
 import re
 import unittest
 
-from examples.terminal.automap import UNITS_PER_DOT, Automap, _line_dots
+from client.automap import UNITS_PER_DOT, Automap, _line_dots
 
 SGR = re.compile(r"\x1b\[[\d;]*m")
 

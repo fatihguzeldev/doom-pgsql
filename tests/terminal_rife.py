@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from examples.terminal.art import Image
-from examples.terminal.rife import Rife, _fetch
+from client.art import Image
+from client.rife import Rife, _fetch
 
 
 class RifeModelsTest(unittest.TestCase):

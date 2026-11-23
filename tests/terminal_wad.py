@@ -51,7 +51,7 @@ def run(wad):
             sys.executable,
             "-B",
             "-m",
-            "examples.terminal.play",
+            "client.play",
             "--game",
             str(game),
             "--delta",

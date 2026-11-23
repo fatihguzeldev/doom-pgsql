@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import psycopg
 
-from examples.terminal.session import Session
+from client.session import Session
 
 
 class SessionTest(unittest.IsolatedAsyncioTestCase):
@@ -31,8 +31,8 @@ class SessionTest(unittest.IsolatedAsyncioTestCase):
             if fire in commands.obj:
                 fire_sent.set()
 
-        with patch("examples.terminal.session.connect", new_callable=AsyncMock), patch(
-            "examples.terminal.session.game_query", query
+        with patch("client.session.connect", new_callable=AsyncMock), patch(
+            "client.session.game_query", query
         ):
             worker = asyncio.create_task(session.submit())
             try:

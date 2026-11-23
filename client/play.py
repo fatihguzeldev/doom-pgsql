@@ -9,18 +9,18 @@ from time import monotonic
 import psycopg
 
 if not __package__:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from examples.terminal.art import Art
-from examples.terminal.database import open_game
-from examples.terminal.display import Display
-from examples.terminal.keyboard import Keyboard, screen
-from examples.terminal.menu import new_game_menu, pause_menu
-from examples.terminal.session import Session
-from examples.terminal.sound import pistol_sound
-from examples.terminal.widgets import LOGO_HZ
+from client.art import Art
+from client.database import open_game
+from client.display import Display
+from client.keyboard import Keyboard, screen
+from client.menu import new_game_menu, pause_menu
+from client.session import Session
+from client.sound import pistol_sound
+from client.widgets import LOGO_HZ
 
-BUNDLED_WAD = Path(__file__).resolve().parents[2] / "assets" / "doom1.wad"
+BUNDLED_WAD = Path(__file__).resolve().parents[1] / "assets" / "doom1.wad"
 
 
 async def first(*coroutines):
@@ -88,7 +88,7 @@ async def play(args, keys):
     display = Display(art)
     engine = None
     if args.rife:
-        from examples.terminal.rife import Rife
+        from client.rife import Rife
 
         engine = await first(loading_screen(display, "RIFE", monotonic()), asyncio.to_thread(Rife))
     maps = art.maps

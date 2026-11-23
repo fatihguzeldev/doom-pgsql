@@ -17,12 +17,13 @@ services:
       retries: 3
 
   play:
+    entrypoint: ["python", "client/play.py"]
     image: ${COMPOSE_PROJECT_NAME}-play${DOOM_PLAY_VARIANT:-}
     build:
       context: .
       target: client${DOOM_PLAY_VARIANT:-}
     volumes:
-      - ./examples/terminal:/app/examples/terminal:ro
+      - ./client:/app/client:ro
       - type: bind
         source: ${DOOM_WAD_PATH:-./assets/doom1.wad}
         target: /app/assets/doom1.wad

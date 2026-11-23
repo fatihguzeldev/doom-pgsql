@@ -6,11 +6,11 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-from examples.terminal.ansi import SGR, cell_width
-from examples.terminal.art import Image
-from examples.terminal.automap import Automap
-from examples.terminal.display import Display
-from examples.terminal.widgets import (
+from client.ansi import SGR, cell_width
+from client.art import Image
+from client.automap import Automap
+from client.display import Display
+from client.widgets import (
     KEY_AMBER,
     KEY_CYAN,
     KEY_FACE,

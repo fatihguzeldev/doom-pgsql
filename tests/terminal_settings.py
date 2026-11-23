@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from examples.terminal.play import local_rtt_ms
+from client.play import local_rtt_ms
 
 
 class LocalSettingsTest(unittest.TestCase):

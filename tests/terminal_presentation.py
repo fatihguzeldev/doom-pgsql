@@ -6,9 +6,9 @@ from importlib.util import find_spec
 from time import monotonic
 from unittest.mock import patch
 
-from examples.terminal.art import Image
-from examples.terminal.keyboard import Keyboard
-from examples.terminal.presentation import Presenter, _turn_view
+from client.art import Image
+from client.keyboard import Keyboard
+from client.presentation import Presenter, _turn_view
 
 
 def image(value):
@@ -44,13 +44,13 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
     async def test_new_frames_are_spaced_after_the_second_sql_arrival(self):
         player = Presenter(Model())
         task = asyncio.create_task(player.run())
-        with patch("examples.terminal.presentation.monotonic", return_value=10):
+        with patch("client.presentation.monotonic", return_value=10):
             try:
                 player.submit(image(0), 1, 10)
                 await self.ready(player)
                 self.assertEqual(player.sample(10).image, image(0))
                 self.assertEqual(player.sample(10.18).tic, 1)
-                with patch("examples.terminal.presentation.monotonic", return_value=10.2):
+                with patch("client.presentation.monotonic", return_value=10.2):
                     player.submit(image(5), 2, 10.2)
                     await self.ready(player)
                 self.assertEqual(player.sample(10.199).tic, 1)
@@ -98,7 +98,7 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(player.run())
         try:
             for tic, arrived in enumerate((10, 10.2, 11.2, 12.2)):
-                with patch("examples.terminal.presentation.monotonic", return_value=arrived):
+                with patch("client.presentation.monotonic", return_value=arrived):
                     player.submit(image(5 * tic), tic, arrived)
                     await self.ready(player)
                 view = player.sample(arrived)
@@ -117,7 +117,7 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(player.run())
         a = math.tau - 0.03
         b = 0.06
-        with patch("examples.terminal.presentation._turn_view", side_effect=lambda im, angle: im):
+        with patch("client.presentation._turn_view", side_effect=lambda im, angle: im):
             try:
                 player.submit(image(0), 1, 10, a)
                 await self.ready(player)
@@ -144,7 +144,7 @@ class PresentationTest(unittest.IsolatedAsyncioTestCase):
     async def test_reverse_responds_while_the_sql_queue_is_full(self):
         player = Presenter(Model())
         task = asyncio.create_task(player.run())
-        with patch("examples.terminal.presentation._turn_view", side_effect=lambda im, angle: im):
+        with patch("client.presentation._turn_view", side_effect=lambda im, angle: im):
             try:
                 player.submit(image(0), 1, 10, 0)
                 await self.ready(player)

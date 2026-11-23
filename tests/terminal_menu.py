@@ -43,7 +43,7 @@ def client(*args):
     master, slave = pty.openpty()
     try:
         termios.tcsetwinsize(slave, (30, 96))
-        cmd = [sys.executable, "-B", "-m", "examples.terminal.play", "--mute", *args]
+        cmd = [sys.executable, "-B", "-m", "client.play", "--mute", *args]
         env = {k: v for k, v in os.environ.items() if k not in ("COLUMNS", "LINES")}
         with subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave, env=env) as proc:
             try:
