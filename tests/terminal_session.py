@@ -12,11 +12,13 @@ from examples.terminal.session import Session
 class SessionTest(unittest.IsolatedAsyncioTestCase):
     async def test_retry_keeps_unacknowledged_batch_separate_from_new_input(self):
         args = SimpleNamespace(dsn="", rtt_ms=0, delta=False, predict_turn=False)
-        state = dict(game=1, epoch=1, tic=40, next_shot=0)
+        state = {"game": 1, "epoch": 1, "tic": 40, "next_shot": 0}
         session = Session(args, state, None)
         forward = [1, 0, 0, False, False]
+        turn = [0, 0, 0.09, False, False]
         fire = [0, 0, 0, False, True]
         session.pending.put_nowait(forward)
+        session.pending.put_nowait(turn)
         attempts = []
         fire_sent = asyncio.Event()
 
@@ -39,4 +41,4 @@ class SessionTest(unittest.IsolatedAsyncioTestCase):
                 worker.cancel()
                 with suppress(asyncio.CancelledError):
                     await worker
-        self.assertEqual(attempts, [(41, [forward]), (41, [forward]), (42, [fire])])
+        self.assertEqual(attempts, [(41, [forward, turn]), (41, [forward, turn]), (43, [fire])])
