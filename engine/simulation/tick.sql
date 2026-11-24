@@ -1,4 +1,4 @@
-CREATE FUNCTION doom.tick(gid bigint,generation bigint,n bigint,forward float8,strafe float8,turn float8,
+CREATE OR REPLACE FUNCTION doom.tick(gid bigint,generation bigint,n bigint,forward float8,strafe float8,turn float8,
     use_line boolean,fire boolean) RETURNS bigint LANGUAGE plpgsql SET jit=off SET plan_cache_mode=force_generic_plan AS $$
 DECLARE
     cmd doom.command := (forward,strafe,turn,use_line,fire);
@@ -64,7 +64,10 @@ BEGIN
                 AND ray.along BETWEEN 0 AND coalesce(dist,1024)+a.radius AND player.z+41 BETWEEN a.z AND a.z+a.height
                 AND ray.along-sqrt(greatest(0,a.radius*a.radius-ray.side*ray.side))<=coalesce(dist,1024)
             ORDER BY ray.along-sqrt(greatest(0,a.radius*a.radius-ray.side*ray.side)),a.id LIMIT 1;
-            UPDATE doom.actors SET health=greatest(0,health-20) WHERE game=gid AND id=target_id;
+            UPDATE doom.actors SET health=greatest(0,health-20) WHERE game=gid AND id=target_id RETURNING * INTO foe;
+            IF FOUND AND foe.role='monster' THEN
+                PERFORM doom.monster_sound(gid,generation,n,foe.code,CASE WHEN foe.health=0 THEN 'death' ELSE 'pain' END);
+            END IF;
             UPDATE doom.games SET ammo=ammo-1,next_shot=n+8 WHERE id=gid;
         END IF;
     END IF;
@@ -116,7 +119,12 @@ BEGIN
         CONTINUE WHEN matrix IS NOT NULL AND foe.sector BETWEEN 0 AND sectors-1 AND player.sector BETWEEN 0 AND sectors-1
             AND (get_byte(matrix,(bit_index/8)::int) & (1 << (bit_index%8)::int))<>0;
         CONTINUE WHEN EXISTS(SELECT FROM doom.trace(g.level,gid,foe.pos,delta,foe.sector,foe.z+32) WHERE blocked);
+        IF foe.awake_at=0 THEN
+            PERFORM doom.monster_sound(gid,generation,n,foe.code,'sight');
+            UPDATE doom.actors SET awake_at=n WHERE game=gid AND id=foe.id;
+        END IF;
         IF dist<128 THEN damage:=damage+4;
+            PERFORM doom.monster_sound(gid,generation,n,foe.code,'attack');
             UPDATE doom.actors SET awake_at=n+24,yaw=atan2(delta[1],delta[0]) WHERE game=gid AND id=foe.id;
         ELSE
             loc := doom.try_move(g.level,foe,foe.pos+point(delta[0]*4/dist,delta[1]*4/dist));

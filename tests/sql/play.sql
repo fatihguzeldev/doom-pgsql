@@ -68,6 +68,16 @@ BEGIN
     ASSERT (SELECT token<>other_key FROM doom.poll_frame(other_game,1,1,other_key));
     UPDATE doom.actors SET game=g,id=1 WHERE game=other_game AND id=77;
     ASSERT (SELECT pixels IS NULL FROM doom.poll_frame(other_game,1,1,other_key));
+    UPDATE doom.actors SET health=40 WHERE game=other_game AND id=1;
+    PERFORM doom.tick(other_game,1,1,0,0,0,false,true);
+    ASSERT (SELECT cues FROM doom.sound_events WHERE game=other_game AND tic=1)
+        = '[[3004,"pain"],[3004,"sight"],[3004,"attack"]]'::jsonb;
+    PERFORM doom.tick(other_game,1,1,0,0,0,false,true);
+    ASSERT (SELECT jsonb_array_length(cues) FROM doom.sound_events WHERE game=other_game AND tic=1)=3;
+    FOR i IN 2..9 LOOP PERFORM doom.tick(other_game,1,i,0,0,0,false,i=9); END LOOP;
+    ASSERT (SELECT cues FROM doom.sound_events WHERE game=other_game AND tic=9)='[[3004,"death"]]'::jsonb;
+    PERFORM doom.monster_sound(other_game,1,71,3001,'attack');
+    ASSERT (SELECT cues FROM doom.sound_events WHERE game=other_game AND slot=1)='[[3001,"attack"]]'::jsonb;
     DELETE FROM doom.games WHERE id=other_game;
     DELETE FROM doom.actors WHERE game=g AND id=1 RETURNING * INTO saved;
     ASSERT (SELECT token<>key FROM doom.poll_frame(g,1,1,key));
