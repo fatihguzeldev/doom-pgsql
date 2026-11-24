@@ -2,7 +2,9 @@
 
 doom, but the engine is rewritten in sql.
 
-[gameplay trailer (49s)](https://github.com/fatihguzeldev/doom-pgsql/releases/tag/trailer) · [doompgsql.fatihguzel.dev](https://doompgsql.fatihguzel.dev)
+https://github.com/user-attachments/assets/e620b130-4338-4c96-9b04-2a006924b14c
+
+[doompgsql.fatihguzel.dev](https://doompgsql.fatihguzel.dev)
 
 ```sh
 ./play
