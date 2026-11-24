@@ -2,7 +2,7 @@
 set -e
 
 repo=$(cd "$(dirname "$0")" && pwd)
-compose=(docker compose -f "$repo/compose.yaml")
+compose=(docker compose --project-directory "$repo")
 args=()
 use_db=true
 rife=false
@@ -45,7 +45,7 @@ if [[ $use_db == true ]]; then
     "${compose[@]}" up -d --wait db
     "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom -f /app/engine/bootstrap.sql
 else
-    compose=(docker compose -f "$repo/compose.services.yaml")
+    compose+=(--env-file /dev/null)
 fi
 
 # the container cannot access the host's audio device

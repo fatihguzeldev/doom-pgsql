@@ -202,7 +202,8 @@ def main():
         args.resolution = render_resolution(args.dsn, args.resolution, args.rife)
     except ValueError as error:
         parser.error(str(error))
-    args.dsn = args.dsn or ""
+    if args.dsn is None:
+        args.dsn = os.environ.get("DOOM_LOCAL_DSN", "")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")
 

@@ -31,6 +31,18 @@ on the minimap, `·` marks your trail and `⚑` marks an exit.
 | `--predict-turn` | show turns while waiting for the next sql frame |
 | `--mute` | turn off sound |
 
-configure local cpu, memory, swap and simulated latency in [settings.yaml](settings.yaml).
-
 `docker compose down` stops the local database and keeps your saves.
+
+## the $5 setup
+
+i wanted to see if doom could run on the $5 postgres plan from [planetscale](https://planetscale.com). to simulate its 1/16 vcpu and 512 mb of ram locally, put this in `.env` next to `play`.
+
+```dotenv
+DOOM_DB_CPUS=0.0625
+DOOM_DB_RAM=512m
+DOOM_DB_RAM_SWAP=512m       # same as ram disables swap
+DOOM_RTT_MS=46              # simulated latency for my connection
+DOOM_RIFE_RESOLUTION=64x40
+```
+
+run `./play --rife` to use it. `--dsn` skips the local settings.

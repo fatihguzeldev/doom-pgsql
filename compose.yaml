@@ -1,4 +1,42 @@
-include:
-  - path:
-      - compose.services.yaml
-      - settings.yaml
+services:
+  db:
+    image: postgres:17
+    cpus: ${DOOM_DB_CPUS:-0}
+    mem_limit: ${DOOM_DB_RAM:-0}
+    memswap_limit: ${DOOM_DB_RAM_SWAP:-0}
+    environment:
+      POSTGRES_DB: doom
+      POSTGRES_PASSWORD: doom
+    volumes:
+      - games:/var/lib/postgresql/data
+      - ./install.sql:/app/install.sql:ro
+      - ./engine:/app/engine:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-d", "doom", "-U", "postgres"]
+      start_period: 1m
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  play:
+    entrypoint: ["python", "client/play.py"]
+    image: ${COMPOSE_PROJECT_NAME}-play${DOOM_PLAY_VARIANT:-}
+    build:
+      context: .
+      target: client${DOOM_PLAY_VARIANT:-}
+    environment:
+      DOOM_LOCAL_DSN: postgresql://postgres:doom@db/doom
+      DOOM_RTT_MS: ${DOOM_RTT_MS:-0}
+      DOOM_RIFE_RESOLUTION: ${DOOM_RIFE_RESOLUTION:-160x100}
+    volumes:
+      - ./client:/app/client:ro
+      - type: bind
+        source: ${DOOM_WAD_PATH:-./assets/doom1.wad}
+        target: /app/assets/doom1.wad
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  games:
