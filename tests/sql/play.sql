@@ -87,6 +87,17 @@ BEGIN
     PERFORM doom.anchor_view(g);
     ASSERT (SELECT pixels=pic FROM doom.frame(g,1,1)),'cached geometry changed the scene';
     ASSERT (SELECT pixels=small FROM doom.poll_frame_low(g,1,1)),'low-resolution frames must not reuse the native depth buffer';
+    SELECT * INTO packet FROM doom.poll_frame(g,1,2,key,160,81);
+    ASSERT (packet.width,packet.height)=(160,81) AND length(packet.pixels)=160*81;
+    ASSERT get_byte(packet.pixels,80*81)=5 AND get_byte(packet.pixels,81*81-1)=4;
+    ASSERT (SELECT pixels IS NULL FROM doom.poll_frame(g,1,3,packet.token,160,81));
+    ASSERT (SELECT pixels IS NOT NULL FROM doom.poll_frame(g,1,3,packet.token,160,83));
+    SELECT * INTO packet FROM doom.poll_tiles(g,1,3,NULL,NULL,97,61);
+    ASSERT (SELECT pixels=packet.pixels AND shades=packet.shades FROM doom.poll_frame(g,1,3,NULL,97,61));
+    ASSERT cardinality(packet.tiles)=13 AND length(packet.pixels)=97*61;
+    known:=packet.hashes;
+    known[13]:=NULL;
+    ASSERT (SELECT tiles=ARRAY[12] AND length(pixels)=61 FROM doom.poll_tiles(g,1,4,packet.token,known,97,61));
     UPDATE doom.actors SET pos=point(100,13) WHERE game=g AND id=1;
     SELECT pixels INTO reference FROM doom.frame(g,1,1);
     DELETE FROM doom.view_cache WHERE game=g;

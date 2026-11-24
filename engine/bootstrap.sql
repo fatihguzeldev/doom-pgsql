@@ -28,11 +28,11 @@ BEGIN;
 \ir render/stationary.sql
 COMMIT;
 \endif
-SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NULL AS install_low \gset
-\if :install_low
+\endif
+SELECT to_regprocedure('doom.poll_frame(bigint,bigint,bigint,text,int,int)') IS NULL AS upgrade_resolution \gset
+\if :upgrade_resolution
 BEGIN;
 \ir render/lowres.sql
 COMMIT;
-\endif
 \endif
 \endif

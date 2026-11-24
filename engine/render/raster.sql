@@ -5,7 +5,7 @@ DECLARE
     p bigint;
     body doom.actors;
     -- compiled wall strips, plane tables and cached backgrounds use the 160x100 grid.
-    native boolean:=cam.w=160;
+    native boolean:=cam.w=160 AND cam.h=100;
     fx float8;
     fy float8;
 
