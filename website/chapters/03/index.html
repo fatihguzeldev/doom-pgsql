@@ -111,6 +111,47 @@
 
         <p>the wall in that extra cell is too far from the step and gets dropped by the distance check. i pay for one more segment test here and save the per-column calculations. a short step gives me a small box, so there’s little room for extra cells.</p>
         <p>i ran the same 350 inputs again in a separate local test, with the same query plan settings on both versions. game updates went from <strong>540 ms to 67 ms</strong>. with a frame drawn after each update, the whole replay went from <strong>1.55 s to 1.11 s</strong>. the recorded game state and the rendered pixels matched at every step.</p>
+
+        <h2 id="drawing-the-room-once" tabindex="-1">drawing the room once</h2>
+        <p>the pillar stays in the same place on screen as the imp walks past it. with the camera still, i can keep the picture of the room and draw the imp wherever it goes next.</p>
+        <p>i started by saving where to draw the room. for a wall, that meant remembering which bit of each screen column to paint. postgres could use that list again on the next frame. it still had to sample the textures and paint the room all over again.</p>
+        <p>so i saved the painted room, shades and all. the next time the imp moved, postgres could start with the room already drawn.</p>
+
+        <figure class="room-camera">
+          <div class="chapter-figure-pair room-frame-pair">
+            <img src="../../assets/room-imp-in-view.png" width="160" height="100" loading="lazy" alt="the imp stands to the left of a pillar, in front of a wall of monitors.">
+            <img src="../../assets/room-imp-behind-pillar.png" width="160" height="100" loading="lazy" alt="from the same camera, the imp has moved to the right and the pillar hides part of it.">
+          </div>
+          <figcaption>i put the imp at two spots in e1m1 and kept the camera fixed.</figcaption>
+        </figure>
+
+        <p>the pillar hides part of the imp in the second frame. paste the whole sprite over the saved room and there’s its arm again, right on top of the pillar.</p>
+        <p>i save one more value for each room pixel. it’s the depth, or how far in front of the camera the surface at that pixel is. when the imp covers part of the same screen column, postgres can tell where the pillar is closer.</p>
+
+        <figure class="room-depth">
+          <div class="chapter-figure-pair room-frame-pair">
+            <div>
+              <p>ignoring room depth</p>
+              <img src="../../assets/room-imp-over-pillar.png" width="70" height="56" loading="lazy" alt="the full imp sprite is drawn over the pillar, including the arm that should be hidden.">
+            </div>
+            <div>
+              <p>checking saved depth</p>
+              <img src="../../assets/room-imp-depth-crop.png" width="70" height="56" loading="lazy" alt="the same imp stands at the same spot, and the pillar hides its arm and part of its body.">
+            </div>
+          </div>
+          <figcaption>same imp position in both crops.</figcaption>
+        </figure>
+
+        <p><code>stroke.depth</code> is the imp’s depth. <code>zbuffer[idx]</code> starts with the room’s depth at this pixel. if the imp has an opaque pixel there and it’s closer, i draw it and use the imp’s depth for the rest of the frame.</p>
+
+        <pre class="chapter-code-wrap"><code class="language-sql"><span class="syntax-keyword">if</span> stroke.depth &lt; zbuffer[idx] <span class="syntax-keyword">then</span>
+    column_data := <span class="syntax-call">set_byte</span>(column_data, idx, <span class="syntax-call">get_byte</span>(sample, i));
+    column_light := <span class="syntax-call">set_byte</span>(column_light, idx, band);
+    zbuffer[idx] := stroke.depth;
+<span class="syntax-keyword">end if</span>;</code></pre>
+
+        <p>building the cache takes a render of the room, so i wait for 4 tics without movement or turn input before making one. a door can open while i’m standing still, though. before reusing the room, postgres checks the camera position and angle, the map revision, and the current state of doors, floors and lights. if any of those have changed, it draws the room again.</p>
+        <p>i rendered both imp positions from scratch and got the same pixels and shades as the cached renders. in a separate test at one fixed view in e1m3, i timed 50 frame requests with an empty cache and another 50 with the room cached. the median went from <strong>5.97 ms to 2.11 ms</strong>.</p>
       </article>
     </main>
   </body>
