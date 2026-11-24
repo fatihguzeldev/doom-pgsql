@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 from .ansi import BACKGROUND, SGR, ansi_rgb, cell_width
 
@@ -10,12 +11,8 @@ VIOLET = "\x1b[38;2;183;135;196m"
 TEXT = "\x1b[38;2;235;222;213m"
 EDGE = "\x1b[38;2;124;89;121m"
 
-LOGO = (
-    ("████▄  ▄████▄ ▄████▄ ██▄  ▄██", "     ", "█████▄ ▄█████ ▄█████ ▄████▄ ██    "),
-    ("██ ▀██ ██  ██ ██  ██ ███▄▄███", "     ", "██  ██ ██     ██     ██  ██ ██    "),
-    ("██  ██ ██  ██ ██  ██ ██▀██▀██", " ▀▀▀ ", "█████▀ ██ ▀██ ▀████▄ ██  ██ ██    "),
-    ("██ ▄██ ██  ██ ██  ██ ██    ██", "     ", "██     ██  ██     ██ ██ ▀██ ██    "),
-    ("████▀  ▀████▀ ▀████▀ ██    ██", "     ", "██     ▀████▀ █████▀ ▀███▀█ ██████"),
+LOGO = tuple(
+    tuple(row.split("|")) for row in Path(__file__).with_name("wordmark.txt").read_text(encoding="utf-8").splitlines()
 )
 SMALL_LOGO = (
     ("█▀▄ █▀█ █▀█ █▄ ▄█", "   ", "█▀█ █▀▀ █▀▀ █▀█ █  "),
@@ -28,7 +25,7 @@ GLINT = "\x1b[38;2;255;246;218m"
 
 
 def logo_for(page):
-    if page.height >= 28 and page.space >= sum(map(len, LOGO[0])):
+    if page.height >= 28 and page.space >= max(sum(map(len, row)) for row in LOGO):
         return LOGO
     if page.height >= 18 and page.space >= sum(map(len, SMALL_LOGO[0])):
         return SMALL_LOGO
@@ -50,7 +47,7 @@ def compact_wordmark(phase):
 def draw_logo(page, logo, y, phase):
     if not logo:
         return
-    width = sum(map(len, logo[0]))
+    width = max(sum(map(len, row)) for row in logo)
     if width > page.space:
         page.centered(y, "DOOM-PGSQL", GOLD)
         return
