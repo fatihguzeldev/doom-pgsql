@@ -84,7 +84,7 @@ def _patch(data, palette):
     return Image(w, h, bytes(rgb), bytes(alpha) if 0 in alpha else None, left, top)
 
 
-def _pistol_wav(data):
+def _sound_wav(data):
     if len(data) < 8:
         return None
     fmt, rate, size = struct.unpack_from("<HHI", data)
@@ -123,11 +123,12 @@ def _opaque_runs(image, x, y, width, height, bottom):
 
 
 class Art:
-    def __init__(self, images, maps, pistol_sound):
+    def __init__(self, images, maps, sounds, music):
         self.title = images.get("TITLEPIC")
         self.skull = images.get("M_SKULL1")
         self.maps = maps
-        self.pistol_sound = pistol_sound
+        self.sounds = sounds
+        self.music = music
         self._images = images
         bar = images.get("STBAR")
         self.has_status_bar = (
@@ -164,7 +165,15 @@ class Art:
             image = _patch(lumps.get(name, b""), palette)
             if image is not None:
                 images[name] = image
-        return cls(images, maps, _pistol_wav(lumps.get("DSPISTOL", b"")))
+        sounds = {
+            name: wav for name, data in lumps.items()
+            if re.fullmatch(r"DS[A-Z0-9_]{1,6}", name) and (wav := _sound_wav(data))
+        }
+        music = {
+            name: data for name, data in lumps.items()
+            if re.fullmatch(r"D_[A-Z0-9_]{1,6}", name) and bytes(data[:4]) in (b"MUS\x1a", b"MThd")
+        }
+        return cls(images, maps, sounds, music)
 
     def _hud(self, health, armor, ammo, keys):
         yield "STBAR", 0, 168

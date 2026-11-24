@@ -19,7 +19,7 @@ from client.keyboard import Keyboard, screen
 from client.menu import new_game_menu, pause_menu
 from client.presentation import FrameRate
 from client.session import Session
-from client.sound import pistol_sound
+from client.sound import game_audio, map_track
 from client.widgets import LOGO_HZ
 
 BUNDLED_WAD = Path(__file__).resolve().parents[1] / "assets" / "doom1.wad"
@@ -105,10 +105,12 @@ async def play(args, keys):
     show_menu = args.game is None
     level = None
     previous_game = None
-    with pistol_sound(art.pistol_sound, args.mute) as sound:
+    async with game_audio(art, args.mute) as sound:
         while not keys.quit.is_set():
-            if show_menu and not await new_game_menu(args, maps, display, keys):
-                return
+            if show_menu:
+                await sound.music("D_INTRO" if "D_INTRO" in art.music else "D_DM2TTL")
+                if not await new_game_menu(args, maps, display, keys):
+                    return
             started = monotonic()
             target = args.map if args.game is None else f"game #{args.game}"
             state = await first(
@@ -116,6 +118,7 @@ async def play(args, keys):
                 open_game(args, wad, level, previous_game),
             )
             args.map, args.skill = state["map"], state["difficulty"]
+            await sound.music(map_track(args.map, art.music))
             if args.map not in maps:
                 maps = (*maps, args.map)
             keys.set_menu(False)
@@ -124,7 +127,7 @@ async def play(args, keys):
                 play_session(session, display, keys, maps, started),
                 session.capture(),
                 session.submit(),
-                session.receive(sound),
+                session.receive(lambda: sound.effect("DSPISTOL")),
             ]
             if session.presenter is not None:
                 tasks.append(session.presenter.run())

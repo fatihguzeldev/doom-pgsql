@@ -27,14 +27,17 @@ class TerminalArtTest(unittest.TestCase):
         self.assertEqual(image.alpha, bytes([0, 255, 255, 255]))
         self.assertEqual(image.rgb[3:], bytes([1, 2, 3, 51, 52, 53, 51, 52, 53]))
         self.assertIsNone(art.title)
-        self.assertIsNone(art.pistol_sound)
+        self.assertFalse(art.sounds)
         self.assertIs(art.compose(image, health=1, armor=0, ammo=0), image)
 
     def test_shareware_art_and_sound(self):
         art = Art.from_bytes((Path(__file__).resolve().parents[1] / "assets/doom1.wad").read_bytes())
         self.assertEqual(art.maps, tuple(f"E1M{i}" for i in range(1, 10)))
         self.assertEqual((art.title.width, art.title.height), (320, 200))
-        with wave.open(io.BytesIO(art.pistol_sound)) as sound:
+        self.assertIn("D_INTRO", art.music)
+        self.assertIn("D_E1M7", art.music)
+        self.assertIn("DSBGDTH1", art.sounds)
+        with wave.open(io.BytesIO(art.sounds["DSPISTOL"])) as sound:
             self.assertEqual(
                 (sound.getnchannels(), sound.getsampwidth(), sound.getframerate()), (1, 1, 11025)
             )

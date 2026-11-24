@@ -1,4 +1,6 @@
 FROM python:3.13-slim AS client
+RUN apt-get update && apt-get install -y --no-install-recommends wildmidi libwildmidi-config freepats \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

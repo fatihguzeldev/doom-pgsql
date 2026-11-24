@@ -7,7 +7,7 @@ args=()
 use_db=true
 rife=false
 export DOOM_PLAY_VARIANT=
-build=()
+build=(--build)
 sound=true
 while (( $# )); do
     arg=$1
@@ -28,13 +28,12 @@ while (( $# )); do
             args+=(--wad)
             arg=/app/assets/doom1.wad
             ;;
-        --help|-h) sound=false; use_db=false ;;
+        --help|-h) sound=false; use_db=false; build=() ;;
         --mute) sound=false ;;
         --dsn|--dsn=*) use_db=false ;;
         --rife)
             rife=true
             export DOOM_PLAY_VARIANT=-rife
-            build=(--build)
             ;;
     esac
     args+=("$arg")
@@ -53,17 +52,10 @@ if [[ $sound == true && -t 0 && -t 1 ]]; then
     for player in afplay paplay aplay; do
         command -v "$player" >/dev/null || continue
         audio=$(mktemp -d)
-        touch "$audio/shots"
-        mkfifo "$audio/events"
-        tail -n +1 -f "$audio/shots" > "$audio/events" &
-        follower=$!
-        (
-            while IFS= read -r event; do
-                "$player" "$audio/pistol.wav" </dev/null &
-            done
-        ) < "$audio/events" >/dev/null 2>&1 &
+        touch "$audio/events"
+        bash "$repo/client/audio.sh" "$audio" "$player" &
         listener=$!
-        trap 'kill "$follower" "$listener" 2>/dev/null || true; wait || true; rm -rf "$audio"' EXIT
+        trap 'kill "$listener" 2>/dev/null || true; wait "$listener" 2>/dev/null || true; rm -rf "$audio"' EXIT
         "${compose[@]}" run --rm "${build[@]}" -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
         exit
     done
