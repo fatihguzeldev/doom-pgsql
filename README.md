@@ -35,7 +35,7 @@ on the minimap, `·` marks your trail and `⚑` marks an exit.
 
 ## the $5 setup
 
-i wanted to see if doom could run on the $5 postgres plan from [planetscale](https://planetscale.com). to simulate its 1/16 vcpu and 512 mb of ram locally, put this in `.env` next to `play`.
+i wanted to see if doom could run on the $5 postgres plan from [planetscale](https://planetscale.com). to simulate its 1/16 vcpu and 512 mib of ram locally, put this in `.env` next to `play`.
 
 ```dotenv
 DOOM_DB_CPUS=0.0625
