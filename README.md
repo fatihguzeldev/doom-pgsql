@@ -25,8 +25,9 @@ on the minimap, `·` marks your trail and `⚑` marks an exit.
 | `--dsn <connection>` | play on an existing postgres database with the engine installed |
 | `--rtt-ms 0` | set simulated latency in milliseconds for local play |
 | `--delta` | fetch only changed strips of each frame |
-| `--rife` | render at 64×40 with frame generation |
-| `--rife --detail` | render at 160×100 with frame generation |
+| `--rife` | enable frame generation |
+| `--resolution 96x60` | set the sql render size (default 160×100) |
+| `--low-res` / `--detail` | shortcuts for 64×40 / 160×100 |
 | `--predict-turn` | show turns while waiting for the next sql frame |
 | `--mute` | turn off sound |
 

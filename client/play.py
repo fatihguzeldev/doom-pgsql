@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from time import monotonic
@@ -148,6 +149,18 @@ def local_rtt_ms(dsn, override):
     return rtt
 
 
+def render_resolution(dsn, override, rife):
+    size = override
+    if size is None:
+        size = os.environ.get("DOOM_RIFE_RESOLUTION", "160x100") if rife and dsn is None else "160x100"
+    match = re.fullmatch(r"([0-9]{1,4})[xX×]([0-9]{1,4})", size)
+    if match:
+        width, height = map(int, match.groups())
+        if 1 <= width <= 4096 and 8 <= height <= 4096:
+            return width, height
+    raise ValueError("expected WIDTHxHEIGHT, with width 1..4096 and height 8..4096")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
     parser.add_argument("--dsn", help="PostgreSQL connection string (or use PG* environment variables)")
@@ -159,7 +172,15 @@ def main():
         "--skill", type=int, choices=range(1, 6), default=3, help="initial difficulty (default: 3)"
     )
     parser.add_argument("--rife", action="store_true", help="interpolate at up to 5x with local turn preview")
-    parser.add_argument("--detail", action="store_true", help="use the native 160x100 SQL renderer with --rife")
+    quality = parser.add_mutually_exclusive_group()
+    quality.add_argument("--resolution", metavar="WIDTHxHEIGHT", help="SQL render size (default: 160x100)")
+    quality.add_argument(
+        "--low-res", dest="resolution", action="store_const", const="64x40", help="render at 64x40"
+    )
+    quality.add_argument(
+        "--detail", dest="resolution", action="store_const", const="160x100",
+        help="render at 160x100",
+    )
     parser.add_argument("--delta", action="store_true", help="receive changed eight-column strips")
     parser.add_argument(
         "--predict-turn", action="store_true", help="show turns before the next SQL frame arrives"
@@ -171,14 +192,16 @@ def main():
     )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
     args = parser.parse_args()
-    if args.detail and not args.rife:
-        parser.error("--detail requires --rife")
     if args.rife and args.delta:
         parser.error("--rife uses full frames; omit --delta")
     try:
         args.rtt_ms = local_rtt_ms(args.dsn, args.rtt_ms)
     except ValueError as error:
         parser.error(f"invalid local RTT: {error}")
+    try:
+        args.resolution = render_resolution(args.dsn, args.resolution, args.rife)
+    except ValueError as error:
+        parser.error(str(error))
     args.dsn = args.dsn or ""
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")

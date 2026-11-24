@@ -51,12 +51,13 @@ async def prepare_level(db, wad, map_name):
 
 async def open_game(args, wad, level=None, previous_game=None):
     async with await connect(args.dsn, autocommit=False) as db:
-        if getattr(args, "rife", False) and not getattr(args, "detail", False):
-            result = await db.execute(
-                "SELECT to_regprocedure('doom.poll_frame_low(bigint,bigint,bigint,text)') IS NOT NULL AS ready"
-            )
+        if args.resolution != (160, 100):
+            signature = "doom.poll_frame(bigint,bigint,bigint,text,int,int)"
+            if args.resolution == (64, 40) and not args.delta:
+                signature = "doom.poll_frame_low(bigint,bigint,bigint,text)"
+            result = await db.execute("SELECT to_regprocedure(%s) IS NOT NULL AS ready", (signature,))
             if not (await result.fetchone())["ready"]:
-                raise ValueError("install engine/render/lowres.sql on this database to use --rife")
+                raise ValueError("apply engine/render/lowres.sql to this database to use the requested resolution")
         if args.game is None:
             if level is None:
                 level = await prepare_level(db, wad, args.map)
@@ -83,7 +84,7 @@ async def open_game(args, wad, level=None, previous_game=None):
         state = await result.fetchone()
         if state is None:
             raise ValueError(f"Game {game} does not exist")
-        cache_stationary = not getattr(args, "rife", False)
+        cache_stationary = not args.rife and args.resolution == (160, 100)
         if "cache_stationary" in state and state["cache_stationary"] != cache_stationary:
             await db.execute("UPDATE doom.games SET cache_stationary=%s WHERE id=%s", (cache_stationary, game))
             state["cache_stationary"] = cache_stationary
@@ -92,11 +93,11 @@ async def open_game(args, wad, level=None, previous_game=None):
 
 
 class Frames:
-    def __init__(self, state, delta, low_resolution=False):
+    def __init__(self, state, delta, resolution=(160, 100)):
         self.game = state["game"]
         self.epoch = state["epoch"]
         self.delta = delta
-        self.low_resolution = low_resolution
+        self.resolution = resolution
         self.frame = self.palette = self.revision = None
         self.token = self.hashes = None
         self.slot = 0
@@ -104,19 +105,20 @@ class Frames:
     async def poll(self, db, one_way_delay):
         self.slot += 1
         params = [self.game, self.epoch, self.slot, self.token]
+        source = "doom.poll_tiles" if self.delta else "doom.poll_frame"
         if self.delta:
-            source = "doom.poll_tiles(%s,%s,%s,%s,%s)"
             params.append(self.hashes)
-        elif self.low_resolution:
-            source = "doom.poll_frame_low(%s,%s,%s,%s)"
-        else:
-            source = "doom.poll_frame(%s,%s,%s,%s)"
+        if self.resolution == (64, 40) and not self.delta:
+            source = "doom.poll_frame_low"
+        elif self.resolution != (160, 100):
+            params.extend(self.resolution)
+        placeholders = ",".join(["%s"] * len(params))
         # keep the hud and world in the same database snapshot
         result = await game_query(
             db,
             one_way_delay,
             f"""SELECT f.*, g.ammo, g.armor, g.keys, g.next_shot, g.secret_exit, a.health
-                FROM {source} f JOIN doom.games g ON g.id=%s
+                FROM {source}({placeholders}) f JOIN doom.games g ON g.id=%s
                 JOIN doom.actors a ON a.game=g.id AND a.id=-1""",
             [*params, self.game],
             binary=True,

@@ -11,7 +11,7 @@ from client.session import Session
 
 class SessionTest(unittest.IsolatedAsyncioTestCase):
     async def test_retry_keeps_unacknowledged_batch_separate_from_new_input(self):
-        args = SimpleNamespace(dsn="", rtt_ms=0, delta=False, predict_turn=False)
+        args = SimpleNamespace(dsn="", rtt_ms=0, delta=False, predict_turn=False, resolution=(160, 100))
         state = {"game": 1, "epoch": 1, "tic": 40, "next_shot": 0}
         session = Session(args, state, None)
         forward = [1, 0, 0, False, False]

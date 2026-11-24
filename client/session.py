@@ -13,8 +13,7 @@ class Session:
     def __init__(self, args, state, keys, engine=None):
         self.dsn, self.state, self.keys = args.dsn, state, keys
         self.one_way_delay = args.rtt_ms / 2000
-        low_resolution = engine is not None and not getattr(args, "detail", False)
-        self.frames = Frames(state, args.delta, low_resolution=low_resolution)
+        self.frames = Frames(state, args.delta, args.resolution)
         self.presenter = Presenter(engine) if engine is not None else None
         self.view = None
         self.pose = None
