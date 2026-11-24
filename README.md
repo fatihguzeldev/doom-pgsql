@@ -45,4 +45,6 @@ DOOM_RTT_MS=46              # simulated latency for my connection
 DOOM_RIFE_RESOLUTION=64x40
 ```
 
-run `./play --rife` to use it. `--dsn` skips the local settings.
+run `./play --rife` to use it.
+
+by the way, doom ran much slower locally with the same specs. docker kept pausing postgres mid-frame to enforce the cpu limit. planetscale says it has the world's fastest postgres. doom-pgsql seems to agree.
