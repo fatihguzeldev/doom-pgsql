@@ -101,21 +101,6 @@ img {
   padding-block: clamp(.75rem, 2.5vw, 1.5rem) clamp(2rem, 6vw, 4.5rem);
 }
 
-.trailer {
-  --cover-width: 72rem;
-}
-
-.trailer h1 {
-  margin: 0 0 .75rem;
-  font: 500 1rem/1.5 var(--code-font);
-}
-
-.trailer video {
-  display: block;
-  inline-size: 100%;
-  block-size: auto;
-}
-
 .opening-frame {
   margin: 0;
 }

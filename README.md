@@ -2,9 +2,7 @@
 
 doom, but the engine is rewritten in sql.
 
-[![an imp appears in the game after running select doom.spawn_monster(:game) in the other terminal](website/assets/spawn-monster.webp)](https://doompgsql.fatihguzel.dev/trailer/)
-
-[watch the trailer (49s)](https://doompgsql.fatihguzel.dev/trailer/) · [doompgsql.fatihguzel.dev](https://doompgsql.fatihguzel.dev)
+[gameplay trailer (49s)](https://github.com/fatihguzeldev/doom-pgsql/releases/tag/trailer) · [doompgsql.fatihguzel.dev](https://doompgsql.fatihguzel.dev)
 
 ```sh
 ./play
