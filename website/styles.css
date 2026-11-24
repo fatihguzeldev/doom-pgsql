@@ -110,15 +110,26 @@ img {
   font: 500 1rem/1.5 var(--code-font);
 }
 
-.book-home video {
+.trailer video {
   display: block;
   inline-size: 100%;
   block-size: auto;
 }
 
+.opening-frame {
+  margin: 0;
+}
+
+.opening-frame img,
 .site-brand img {
   inline-size: 100%;
   image-rendering: pixelated;
+}
+
+.opening-frame figcaption {
+  margin-block-start: .75rem;
+  color: var(--copper);
+  font: 500 .875rem/1.5 var(--code-font);
 }
 
 .opening-line {
