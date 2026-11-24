@@ -20,7 +20,20 @@
         <a href="../03/" aria-label="chapter 3, making it playable" aria-current="page"><span class="chapter-number">3</span></a>
         <a href="../04/" aria-label="chapter 4, dlss (kinda)"><span class="chapter-number">4</span></a>
       </nav>
-      <article class="chapter-body" aria-label="making it playable"></article>
+      <article class="chapter-body" aria-labelledby="playable-title">
+        <h1 id="playable-title">making it playable</h1>
+        <pre><code>for (int i = 0; i &lt; 4; i++)
+    strip[i] = texture[start + i];</code></pre>
+        <p>4 bytes from a texture into a buffer. here, <code>strip</code> holds the colors for 4 pixels i’m drawing in one column of a wall. it’s already in memory, so c can go straight to <code>strip[i]</code> and change that one byte. the next iteration writes into the same buffer. with a postgres <code>bytea</code>, i’d call <code>set_byte</code> and assign the result back to <code>strip</code>. <code>set_byte</code> copies the whole value before changing the byte. 4 iterations, 4 copies of the buffer.</p>
+        <p>compiling doom’s c engine to wasm was one option. i’d write an interpreter in postgres to carry out the compiled instructions, including memory reads and writes like these. the original engine would still be deciding what to read, what to write, and how often to do it.</p>
+        <p>for that little loop, i’d be teaching postgres to read and write each byte separately. the bytes are next to each other in the texture. what i actually want to say is “give me those 4 bytes and leave the rest to me.” <code>substring</code> can return the whole run in one call. once i know which part of the wall is in view, i can ask postgres for the texture bytes i need to draw it.</p>
+        <p>so i kept doom’s maps and art. i wrote the engine in sql. from scratch.</p>
+        <p>the people at cedardb had already ported doom to sql. i ran sqldoom with the limits of planetscale’s $5 instance, 1/16 of a vcpu and 512 mib of ram. at 320×200, i got <strong>0.033 fps</strong>. that’s 6 new frames in 3 minutes.</p>
+        <p>my engine was drawing at 160×100, so i tried that size with sqldoom too. i had it sample every other row and column while drawing. that got me <strong>0.05 fps</strong>, or 9 new frames in 3 minutes.</p>
+        <p>one of my early builds at 160×100 got <strong>0.25 fps</strong>. that’s 3 new frames in 12 seconds.</p>
+        <p>okay, say i double it. i get a new frame every 2 seconds. double it again and i’m at 1 fps. try aiming at a monster that gets a whole second to move before you see where it went.</p>
+        <p>i had a lot of code to go back through. at least i knew who wrote it.</p>
+      </article>
     </main>
   </body>
 </html>
