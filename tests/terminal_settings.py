@@ -1,11 +1,39 @@
 import os
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from unittest.mock import patch
 
-from client.play import local_rtt_ms, render_resolution
+from client.play import local_rtt_ms, parse_args, render_resolution
 
 
 class LocalSettingsTest(unittest.TestCase):
+    @patch("sys.stdin.isatty", return_value=True)
+    @patch("sys.stdout.isatty", return_value=True)
+    def test_dsn_selection(self, *_):
+        env = {"DOOM_LOCAL_DSN": "dbname=local", "DOOM_DSN": "dbname=saved", "DOOM_RTT_MS": "46"}
+        with patch.dict(os.environ, env, clear=True):
+            for flags, dsn, rtt in (
+                ([], "dbname=local", 46),
+                (["--dsn", "--rife"], "dbname=saved", 0),
+                (["--dsn", "dbname=other"], "dbname=other", 0),
+                (["--dsn=dbname=other"], "dbname=other", 0),
+                (["--dsn", ""], "", 0),
+            ):
+                with self.subTest(flags=flags):
+                    args = parse_args(flags)
+                    self.assertEqual((args.dsn, args.rtt_ms), (dsn, rtt))
+
+    def test_bare_dsn_requires_a_saved_address(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            redirect_stderr(StringIO()) as message,
+            self.assertRaises(SystemExit) as error,
+        ):
+            parse_args(["--dsn"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("set DOOM_DSN in .env", message.getvalue())
+
     def test_native_resolution_without_a_local_setting(self):
         with patch.dict(os.environ, {}, clear=True):
             for rife in (True, False):

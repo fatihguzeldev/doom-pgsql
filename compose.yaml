@@ -26,6 +26,7 @@ services:
       context: .
       target: client${DOOM_PLAY_VARIANT:-}
     environment:
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
       DOOM_LOCAL_DSN: postgresql://postgres:doom@db/doom
       DOOM_RTT_MS: ${DOOM_RTT_MS:-0}
       DOOM_RIFE_RESOLUTION: ${DOOM_RIFE_RESOLUTION:-160x100}

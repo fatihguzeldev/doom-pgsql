@@ -22,7 +22,7 @@ on the minimap, `·` marks your trail and `⚑` marks an exit.
 | `--map e1m1` | choose the starting map |
 | `--skill 3` | set difficulty from 1 to 5 (default 3) |
 | `--game 1` | resume a saved game by id |
-| `--dsn <connection>` | play on an existing postgres database with the engine installed |
+| `--dsn [connection]` | play on an existing postgres database with the engine installed. uses `DOOM_DSN` from `.env` when the address is omitted |
 | `--rtt-ms 0` | set simulated latency in milliseconds for local play |
 | `--delta` | fetch only changed strips of each frame |
 | `--rife` | enable frame generation |

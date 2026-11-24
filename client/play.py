@@ -164,9 +164,13 @@ def render_resolution(dsn, override, rife):
     raise ValueError("expected WIDTHxHEIGHT, with width 1..4096 and height 8..4096")
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
-    parser.add_argument("--dsn", help="PostgreSQL connection string (or use PG* environment variables)")
+    missing_dsn = object()
+    parser.add_argument(
+        "--dsn", nargs="?", metavar="CONNECTION", const=os.environ.get("DOOM_DSN") or missing_dsn,
+        help="connect to an existing database (uses DOOM_DSN in .env if the address is omitted)",
+    )
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--wad", type=Path, help="use a classic WAD (default: bundled shareware)")
     source.add_argument("--game", type=int, help="resume an existing game by ID")
@@ -194,7 +198,9 @@ def main():
         help="override the simulated round-trip delay for local play",
     )
     parser.add_argument("--mute", action="store_true", help="silence game audio")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.dsn is missing_dsn:
+        parser.error("set DOOM_DSN in .env or pass --dsn CONNECTION")
     if args.rife and args.delta:
         parser.error("--rife uses full frames; omit --delta")
     try:
@@ -209,6 +215,11 @@ def main():
         args.dsn = os.environ.get("DOOM_LOCAL_DSN", "")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error("requires an interactive terminal")
+    return args
+
+
+def main():
+    args = parse_args()
 
     async def run():
         keys = Keyboard()
@@ -218,7 +229,7 @@ def main():
     try:
         asyncio.run(run())
     except (OSError, ValueError, psycopg.Error) as error:
-        parser.exit(1, f"play: {error}\n")
+        sys.exit(f"play: {error}")
 
 
 if __name__ == "__main__":

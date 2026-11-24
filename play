@@ -8,6 +8,7 @@ use_db=true
 rife=false
 export DOOM_PLAY_VARIANT=
 build=(--build)
+run_options=()
 sound=true
 while (( $# )); do
     arg=$1
@@ -44,7 +45,9 @@ if [[ $use_db == true ]]; then
     "${compose[@]}" up -d --wait db
     "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom -f /app/engine/bootstrap.sql
 else
-    compose+=(--env-file /dev/null)
+    # compose validates the db service even when only the remote client runs
+    export DOOM_DB_CPUS=0 DOOM_DB_RAM=0 DOOM_DB_RAM_SWAP=0
+    run_options+=(-e DOOM_DSN)
 fi
 
 # the container cannot access the host's audio device
@@ -56,8 +59,8 @@ if [[ $sound == true && -t 0 && -t 1 ]]; then
         bash "$repo/client/audio.sh" "$audio" "$player" &
         listener=$!
         trap 'kill "$listener" 2>/dev/null || true; wait "$listener" 2>/dev/null || true; rm -rf "$audio"' EXIT
-        "${compose[@]}" run --rm "${build[@]}" -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
+        "${compose[@]}" run --rm "${build[@]}" "${run_options[@]}" -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
         exit
     done
 fi
-exec "${compose[@]}" run --rm "${build[@]}" play "${args[@]}"
+exec "${compose[@]}" run --rm "${build[@]}" "${run_options[@]}" play "${args[@]}"
