@@ -125,6 +125,18 @@ img {
   text-wrap: pretty;
 }
 
+.opening-guide {
+  max-inline-size: 58ch;
+  margin-block: .75rem 0;
+  color: var(--muted);
+  font-size: 1rem;
+  text-wrap: pretty;
+}
+
+.opening-guide strong {
+  font-weight: 600;
+}
+
 .chapter-index {
   margin-block-start: clamp(2rem, 4.5vw, 2.75rem);
   padding-block-start: 1.125rem;
