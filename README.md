@@ -2,6 +2,8 @@
 
 doom, but the engine is rewritten in sql.
 
+[doompgsql.fatihguzel.dev](https://doompgsql.fatihguzel.dev)
+
 ```sh
 ./play
 ```
