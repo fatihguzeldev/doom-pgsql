@@ -7,8 +7,10 @@ from psycopg.rows import dict_row
 from .automap import Automap
 
 
-def connect(dsn, *, autocommit=True):
-    return psycopg.AsyncConnection.connect(dsn, autocommit=autocommit, row_factory=dict_row)
+def connect(dsn, *, autocommit=True, application_name=None):
+    return psycopg.AsyncConnection.connect(
+        dsn, autocommit=autocommit, row_factory=dict_row, application_name=application_name
+    )
 
 
 async def game_query(db, one_way_delay, sql, params, *, binary=False):

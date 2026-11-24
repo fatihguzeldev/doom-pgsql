@@ -91,7 +91,7 @@ class Session:
     async def receive(self, sound):
         while True:
             try:
-                async with await connect(self.dsn) as db:
+                async with await connect(self.dsn, application_name=f"doom-pgsql/{self.frames.game}") as db:
                     while True:
                         await self.active.wait()
                         start = monotonic()
