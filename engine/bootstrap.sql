@@ -4,6 +4,12 @@ SELECT to_regnamespace('doom') IS NULL AS install \gset
 \if :install
 \ir ../install.sql
 \else
+SELECT to_regprocedure('doom.spawn_monster(bigint)') IS NULL AS upgrade_spawn \gset
+\if :upgrade_spawn
+BEGIN;
+\ir simulation/spawn.sql
+COMMIT;
+\endif
 SELECT to_regclass('doom.sound_events') IS NULL AS upgrade_sound \gset
 \if :upgrade_sound
 BEGIN;

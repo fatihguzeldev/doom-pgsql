@@ -49,6 +49,27 @@ BEGIN
     UPDATE doom.spawns SET angle=angle WHERE level=p AND id=0;
     ASSERT doom.cached_level(sha256('fixture'::bytea),'FIXTURE') IS NULL;
     SELECT game_id INTO STRICT g FROM doom.new_game(p);
+    INSERT INTO doom.art(level,kind,name,w,h,pixels) VALUES(p,'sprite','BAR1A0',1,1,decode('31','hex'));
+    ASSERT doom.spawn_barrel(g)=2;
+    ASSERT (SELECT pos~=point(64,0) AND role='barrel' AND health=20 FROM doom.actors WHERE game=g AND id=2);
+    ASSERT doom.spawn_barrel(g) IS NULL;
+    DELETE FROM doom.actors WHERE game=g AND id=2;
+
+    SELECT game_id INTO STRICT other_game FROM doom.new_game(p);
+    UPDATE doom.actors SET yaw=pi() WHERE game=other_game AND id=-1;
+    ASSERT doom.spawn_monster(other_game) IS NULL,'the map has no imp sprite';
+    INSERT INTO doom.art(level,kind,name,w,h,pixels) VALUES(p,'sprite','TROOA1',1,1,decode('31','hex'));
+    UPDATE doom.actors SET yaw=0 WHERE game=other_game AND id=-1;
+    ASSERT doom.spawn_monster(other_game) IS NULL,'the imp would overlap the monster at x=100';
+    UPDATE doom.actors SET yaw=pi() WHERE game=other_game AND id=-1;
+    ASSERT doom.spawn_monster(other_game)=2;
+    ASSERT EXISTS(SELECT FROM doom.actors a JOIN doom.art art ON art.id=a.art
+        WHERE a.game=other_game AND a.id=2 AND a.pos~=point(-64,0) AND a.sector=0 AND a.z=0
+        AND (a.code,a.role,a.health,a.radius,a.height)=(3001,'monster',60,20,56)
+        AND (art.level,art.kind,art.name)=(p,'sprite','TROOA1'));
+    ASSERT doom.spawn_monster(other_game) IS NULL,'two imps cannot occupy the same spot';
+    DELETE FROM doom.games WHERE id=other_game;
+
     SELECT pixels,token INTO pic,key FROM doom.poll_frame(g,1,1);
     SELECT * INTO packet FROM doom.poll_frame_low(g,1,1,key);
     ASSERT packet.width=64 AND packet.height=40 AND length(packet.pixels)=2560 AND length(packet.shades)=2560;
