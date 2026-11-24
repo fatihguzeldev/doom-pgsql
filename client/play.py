@@ -127,7 +127,7 @@ async def play(args, keys):
                 play_session(session, display, keys, maps, started),
                 session.capture(),
                 session.submit(),
-                session.receive(lambda: sound.effect("DSPISTOL")),
+                session.receive(sound),
             ]
             if session.presenter is not None:
                 tasks.append(session.presenter.run())

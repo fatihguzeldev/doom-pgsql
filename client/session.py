@@ -88,7 +88,7 @@ class Session:
             await self.pending.put(command)
             await asyncio.sleep(max(0, 1 / 35 - (monotonic() - start)))
 
-    async def receive(self, on_shot):
+    async def receive(self, sound):
         while True:
             try:
                 async with await connect(self.dsn) as db:
@@ -125,8 +125,11 @@ class Session:
                         }
                         if packet["next_shot"] > self._next_shot:
                             self.last_shot = now
-                            on_shot()
+                            sound.effect("DSPISTOL")
                         self._next_shot = packet["next_shot"]
+                        for batch in packet.get("sounds", ()):
+                            for thing, event in batch:
+                                sound.monster(thing, event)
                         if packet["finished"] or packet["health"] <= 0:
                             self.ended = True
                             self.active.clear()

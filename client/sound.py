@@ -14,6 +14,16 @@ _DOOM2_TRACKS = [
     "ADRIAN", "MESSG2", "ROMER2", "TENSE", "SHAWN3", "OPENIN", "EVIL", "ULTIMA",
 ]
 _EPISODE4_TRACKS = ["E3M4", "E3M2", "E3M3", "E1M5", "E2M7", "E2M4", "E2M6", "E2M5", "E1M9"]
+_MONSTER_SOUNDS = {
+    3004: {"sight": "DSPOSIT1", "attack": "DSPISTOL", "pain": "DSPOPAIN", "death": "DSPODTH1"},
+    9:    {"sight": "DSPOSIT2", "attack": "DSSHOTGN", "pain": "DSPOPAIN", "death": "DSPODTH2"},
+    3001: {"sight": "DSBGSIT1", "attack": "DSCLAW",   "pain": "DSPOPAIN", "death": "DSBGDTH1"},
+    3002: {"sight": "DSSGTSIT", "attack": "DSSGTATK", "pain": "DSDMPAIN", "death": "DSSGTDTH"},
+    3003: {"sight": "DSBRSSIT", "attack": "DSFIRSHT", "pain": "DSDMPAIN", "death": "DSBRSDTH"},
+    3005: {"sight": "DSCACSIT", "attack": "DSFIRSHT", "pain": "DSDMPAIN", "death": "DSCACDTH"},
+    3006: {                     "attack": "DSSKLATK", "pain": "DSDMPAIN", "death": "DSFIRXPL"},
+}
+_MONSTER_SOUNDS[58] = _MONSTER_SOUNDS[3002]  # spectres use demon sounds
 
 
 def map_track(name, music):
@@ -56,6 +66,11 @@ class Audio:
             if not path.exists():
                 path.write_bytes(wav)
             self._send("effect " + name)
+
+    def monster(self, thing, event):
+        name = _MONSTER_SOUNDS.get(thing, {}).get(event)
+        if name:
+            self.effect(name)
 
     async def music(self, name):
         if self.events is None:

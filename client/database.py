@@ -77,9 +77,10 @@ async def open_game(args, wad, level=None, previous_game=None):
         else:
             game = args.game
         result = await db.execute(
-            """SELECT g.id AS game, g.*, l.name AS map
+            """SELECT g.id AS game, g.*, l.name AS map,
+                      NOT %s AND to_regclass('doom.sound_events') IS NOT NULL AS has_sounds
                FROM doom.games g JOIN doom.levels l ON l.id=g.level WHERE g.id=%s""",
-            (game,),
+            (args.mute, game),
         )
         state = await result.fetchone()
         if state is None:
@@ -101,6 +102,7 @@ class Frames:
         self.frame = self.palette = self.revision = None
         self.token = self.hashes = None
         self.slot = 0
+        self.sound_tic = state["tic"] if state.get("has_sounds") else None
 
     async def poll(self, db, one_way_delay):
         self.slot += 1
@@ -113,11 +115,16 @@ class Frames:
         elif self.resolution != (160, 100):
             params.extend(self.resolution)
         placeholders = ",".join(["%s"] * len(params))
+        sounds = ""
+        if self.sound_tic is not None:
+            sounds = """, ARRAY(SELECT s.cues FROM doom.sound_events s WHERE s.game=g.id AND s.epoch=f.epoch
+                              AND s.tic>greatest(%s,f.tic-70) AND s.tic<=f.tic ORDER BY s.tic) AS sounds"""
+            params.insert(0, self.sound_tic)
         # keep the hud and world in the same database snapshot
         result = await game_query(
             db,
             one_way_delay,
-            f"""SELECT f.*, g.ammo, g.armor, g.keys, g.next_shot, g.secret_exit, a.health
+            f"""SELECT f.*, g.ammo, g.armor, g.keys, g.next_shot, g.secret_exit, a.health {sounds}
                 FROM {source}({placeholders}) f JOIN doom.games g ON g.id=%s
                 JOIN doom.actors a ON a.game=g.id AND a.id=-1""",
             [*params, self.game],
@@ -156,4 +163,6 @@ class Frames:
         if changed:
             self.frame = packet
         self.token = packet["token"]
+        if self.sound_tic is not None:
+            self.sound_tic = packet["tic"]
         return packet, changed or palette_changed

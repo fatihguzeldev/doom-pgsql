@@ -40,10 +40,14 @@ class AudioTest(unittest.IsolatedAsyncioTestCase):
                         self.assertGreater(wav.getnframes(), wav.getframerate())
                         self.assertGreater(len(set(wav.readframes(wav.getframerate() * 3))), 16)
                 audio.effect("DSPISTOL")
+                audio.monster(3001, "sight")
+                audio.monster(3001, "attack")
+                audio.monster(3001, "death")
                 await audio.music("D_INTRO")
             cues = (path / "events").read_text().splitlines()
             self.assertEqual(cues, [
                 "stop", "music D_INTRO", "stop", "music D_E1M7", "effect DSPISTOL",
+                "effect DSBGSIT1", "effect DSCLAW", "effect DSBGDTH1",
                 "stop", "music D_INTRO", "stop", "quit",
             ])
             self.assertTrue((path / "DSPISTOL.wav").is_file())
