@@ -71,13 +71,37 @@ class Display:
             sys.stdout.write("".join(output) + "\x1b[0m")
             sys.stdout.flush()
 
-    def loading(self, target, seconds, phase):
+    def _picture(self, page, picture, x, y, width, height):
+        key = picture, width, height
+        if self._title_key != key:
+            self._title_rows = image_rows(picture, width, height)
+            self._title_key = key
+        for i, line in enumerate(self._title_rows):
+            page.put(x, y + i, line)
+
+    def loading(self, target, completed, total, phase, detail=None):
         page = Page()
         logo = logo_for(page)
-        y = page.height // 2
-        draw_logo(page, logo, y - len(logo) - 2, phase)
-        page.centered(y, f"Loading {target}", GOLD)
-        page.centered(y + 2, f"{seconds}s    Q quit", VIOLET)
+        picture = self.art.title if self.art else None
+        width = height = 0
+        if picture and page.height >= 14:
+            width, height = fit_image(picture.width, picture.height, min(84, page.space), page.height - len(logo) - 7)
+        y = max(0, (page.height - len(logo) - height - 5) // 2)
+        draw_logo(page, logo, y, phase)
+        y += len(logo)
+        if height:
+            self._picture(page, picture, (page.width - width) // 2, y + 1, width, height)
+            y += height + 1
+        y = min(y + 1, max(0, page.height - 3))
+        if page.height > 1:
+            page.centered(y, f"Loading {target}" if target else "Loading", GOLD)
+        width = min(40, page.space)
+        fill = width * completed // total
+        tip = "▏▎▍▌"[phase % 4] if fill < width else ""
+        bar = GOLD + "█" * fill + COPPER + tip + EDGE + "░" * (width - fill - len(tip))
+        page.put((page.width - width) // 2, min(y + 1, page.height - 1), bar)
+        footer = f"{detail}    Q quit" if detail else "Q quit"
+        page.centered(y + 2, footer if len(footer) <= page.space else "Q quit", VIOLET)
         self._present(page)
 
     def _game_rows(self, world, status, turn, shot_age, cols, rows):
@@ -225,12 +249,7 @@ class Display:
             image_x, image_y = (page.width - iw) // 2, body_y
             menu_x, menu_y = (page.width - width) // 2, body_y + ih + int(ih > 0) * gap
         if iw and ih:
-            key = art, iw, ih
-            if self._title_key != key:
-                self._title_rows = image_rows(art, iw, ih)
-                self._title_key = key
-            for i, line in enumerate(self._title_rows):
-                page.put(image_x, image_y + i, line)
+            self._picture(page, art, image_x, image_y, iw, ih)
         page.put(menu_x, menu_y, COPPER + fit_text(heading, width))
         page.put(menu_x, menu_y + 1, EDGE + "─" * width)
         start = max(0, min(selected - choices // 2, len(options) - choices))

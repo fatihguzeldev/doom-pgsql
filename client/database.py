@@ -33,7 +33,7 @@ async def saved_games(dsn):
         return await result.fetchall()
 
 
-async def prepare_level(db, wad, map_name):
+async def prepare_level(db, wad, map_name, on_import=lambda: None):
     result = await db.execute(
         "SELECT to_regprocedure('doom.cached_level(bytea,text)') IS NOT NULL AS supported"
     )
@@ -47,12 +47,14 @@ async def prepare_level(db, wad, map_name):
         query = "SELECT doom.prepare_wad(%s,%s) AS id"
     else:
         query = "SELECT doom.load_wad(%s,%s) AS id"
+    on_import()
     result = await db.execute(query, (wad, map_name))
     return (await result.fetchone())["id"]
 
 
-async def open_game(args, wad, level=None, previous_game=None):
+async def open_game(args, wad, level=None, previous_game=None, *, progress=lambda step, stage: None):
     async with await connect(args.dsn, autocommit=False) as db:
+        progress(1, "Checking map" if args.game is None else "Opening save")
         if args.resolution != (160, 100):
             signature = "doom.poll_frame(bigint,bigint,bigint,text,int,int)"
             if args.resolution == (64, 40) and not args.delta:
@@ -62,7 +64,8 @@ async def open_game(args, wad, level=None, previous_game=None):
                 raise ValueError("apply engine/render/lowres.sql to this database to use the requested resolution")
         if args.game is None:
             if level is None:
-                level = await prepare_level(db, wad, args.map)
+                level = await prepare_level(db, wad, args.map, lambda: progress(2, "Importing map"))
+            progress(3, "Spawning actors")
             result = await db.execute("SELECT game_id FROM doom.new_game(%s,%s)", (level, args.skill))
             game = (await result.fetchone())["game_id"]
             if previous_game is not None:
@@ -78,6 +81,7 @@ async def open_game(args, wad, level=None, previous_game=None):
                 )
         else:
             game = args.game
+        progress(4, "Reading game state")
         result = await db.execute(
             """SELECT g.id AS game, g.*, l.name AS map,
                       NOT %s AND to_regclass('doom.sound_events') IS NOT NULL AS has_sounds

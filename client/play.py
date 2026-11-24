@@ -37,20 +37,42 @@ async def first(*coroutines):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def loading_screen(display, target, started):
-    while True:
+class Loading:
+    def __init__(self, display, target, total, completed=0, stage=None):
+        self.display = display
+        self.target = target
+        self.total = total
+        self.completed = completed
+        self.stage = stage
+        self.started = monotonic()
+
+    def draw(self):
         now = monotonic()
-        display.loading(target, int(now - started), int(now * LOGO_HZ))
-        await asyncio.sleep(1 / LOGO_HZ)
+        elapsed = int(now - self.started)
+        detail = f"{self.stage} · {elapsed}s" if self.stage and elapsed else None
+        self.display.loading(self.target, self.completed, self.total, int(now * LOGO_HZ), detail)
+
+    def update(self, completed, stage=None):
+        self.completed = completed
+        self.stage = stage
+        self.draw()
+
+    async def animate(self):
+        while True:
+            self.draw()
+            await asyncio.sleep(1 / LOGO_HZ)
 
 
-async def play_session(session, display, keys, maps, started):
+async def play_session(session, display, keys, maps, loading):
     period = 1 / 60 if session.presenter is not None else 1 / 35
     counter = FrameRate()
     while True:
         now = monotonic()
         view, turn = session.sample_view(now)
         if view is not None and session.status:
+            if loading is not None:
+                loading.update(loading.total)
+                loading = None
             age = now - session.last_shot if session.last_shot is not None else None
             if age is not None and age >= 8 / 35:
                 age = None
@@ -65,8 +87,8 @@ async def play_session(session, display, keys, maps, started):
                 phase=int(now * LOGO_HZ),
                 lit_keys=keys.lit_keys(now),
             )
-        else:
-            display.loading(session.state["map"], int(now - started), int(now * LOGO_HZ))
+        elif loading is not None:
+            loading.draw()
         try:
             key = await asyncio.wait_for(keys.menu_keys.get(), max(0.001, period - (monotonic() - now)))
         except TimeoutError:
@@ -90,10 +112,14 @@ async def play(args, keys):
     art = Art.from_bytes(wad)
     display = Display(art)
     engine = None
+    prepared = int(os.environ.get("DOOM_LAUNCH_STEPS", "0"))
+    startup = Loading(display, None, prepared + 1, completed=prepared)
+    startup.draw()
     if args.rife:
         from client.rife import Rife
 
-        engine = await first(loading_screen(display, "RIFE", monotonic()), asyncio.to_thread(Rife))
+        engine = await first(startup.animate(), asyncio.to_thread(Rife))
+    startup.update(startup.total)
     maps = art.maps
     if args.game is None and args.map and maps and args.map not in maps:
         raise ValueError(f"Map {args.map} not found in {path.name}")
@@ -111,11 +137,11 @@ async def play(args, keys):
                 await sound.music("D_INTRO" if "D_INTRO" in art.music else "D_DM2TTL")
                 if not await new_game_menu(args, maps, display, keys):
                     return
-            started = monotonic()
             target = args.map if args.game is None else f"game #{args.game}"
+            loading = Loading(display, target, 6, stage="Connecting")
             state = await first(
-                loading_screen(display, target, started),
-                open_game(args, wad, level, previous_game),
+                loading.animate(),
+                open_game(args, wad, level, previous_game, progress=loading.update),
             )
             args.map, args.skill = state["map"], state["difficulty"]
             await sound.music(map_track(args.map, art.music))
@@ -123,8 +149,9 @@ async def play(args, keys):
                 maps = (*maps, args.map)
             keys.set_menu(False)
             session = Session(args, state, keys, engine)
+            loading.update(5, "Drawing first frame")
             tasks = [
-                play_session(session, display, keys, maps, started),
+                play_session(session, display, keys, maps, loading),
                 session.capture(),
                 session.submit(),
                 session.receive(sound),

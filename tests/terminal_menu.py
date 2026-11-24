@@ -81,7 +81,8 @@ def run():
             tty.until(b"< E1M7 >")
             tty.send(b"\r")
             tty.until(b"Loading E1M7")
-            tty.until(b"1s    Q quit")
+            tty.until(b"Q quit")
+            tty.until(rb"Checking map .*? [1-9]\d*s")
             tty.quit(proc)
 
         with client("--map", "e1m1") as (tty, proc):
@@ -93,6 +94,7 @@ def run():
             tty.until(b"Hey, not too rough")
             tty.send(b"\x1b[A\x1b[A\r")
             tty.until(b"Loading E1M1")
+            tty.until(("█" * 40).encode())
             tty.until(b"AMMO 50")
             tty.send(b" ")
             tty.until(b"AMMO 49")
