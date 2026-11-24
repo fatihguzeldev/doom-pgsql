@@ -152,6 +152,53 @@
 
         <p>building the cache takes a render of the room, so i wait for 4 tics without movement or turn input before making one. a door can open while i’m standing still, though. before reusing the room, postgres checks the camera position and angle, the map revision, and the current state of doors, floors and lights. if any of those have changed, it draws the room again.</p>
         <p>i rendered both imp positions from scratch and got the same pixels and shades as the cached renders. in a separate test at one fixed view in e1m3, i timed 50 frame requests with an empty cache and another 50 with the room cached. the median went from <strong>5.97 ms to 2.11 ms</strong>.</p>
+
+        <h2 id="drawing-a-wall-column" tabindex="-1">eight pixels at a time</h2>
+        <p>once postgres knows where a wall goes on the screen, it still has to fill in all those pixels. i profiled 50 renders of the same view to see how much time that took. picking those colors out of textures and putting them into column buffers took 79 of the 167 ms spent drawing.</p>
+        <p>doom draws walls in vertical columns. a strip of wall on the screen gets its colors from one column of the wall’s texture. for each pixel i go down on screen, i take a step down the texture. i round that position down to pick a <strong>texel</strong>, which is a pixel in the texture. the wall is close in this shot, so each of the four texels shown supplies two screen pixels.</p>
+
+        <figure>
+          <img src="../../assets/wall-pixel-mapping.png" width="640" height="757" loading="lazy" alt="a doom frame with eight pixels of one wall column marked. below, four texels in the wall texture supply those eight screen pixels, two per texel.">
+        </figure>
+
+        <p>the sampler used <code>set_byte</code> to put each color into a <code>bytea</code> strip. every call returned a copy of the strip with one byte changed. that’s the problem with the little c loop from the start of this chapter. now it’s happening while i’m drawing a wall.</p>
+        <p>i put eight color indices into a <code>bigint</code>. the first goes in the highest byte, and <code>int8send</code> returns the bytes in that order. in the picture, <code>a</code> is color index <code>142</code>, so it goes into the first two bytes.</p>
+
+        <pre class="chapter-code-wrap"><code class="language-sql"><span class="syntax-keyword">select</span> <span class="syntax-call">int8send</span>(
+    (<span class="syntax-literal">142</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">56</span>) | (<span class="syntax-literal">142</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">48</span>) |
+    (<span class="syntax-literal">107</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">40</span>) | (<span class="syntax-literal">107</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">32</span>) |
+    (<span class="syntax-literal">109</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">24</span>) | (<span class="syntax-literal">109</span>::<span class="syntax-keyword">bigint</span> &lt;&lt; <span class="syntax-literal">16</span>) |
+    (<span class="syntax-literal">106</span>::<span class="syntax-keyword">bigint</span> &lt;&lt;  <span class="syntax-literal">8</span>) |  <span class="syntax-literal">106</span>::<span class="syntax-keyword">bigint</span>
+);</code></pre>
+
+        <p>one pass through the loop now puts eight bytes into the strip. postgres still has to work out where all eight bytes come from. the first four pixels in that strip pick <code>a, a, b, b</code>. could i have those four bytes ready to go?</p>
+        <p>some groups stay in <code>a</code> for all four pixels. in others, the last pixel finally reaches <code>b</code>. for a close wall, the same few texels give us a short list of patterns.</p>
+
+        <figure>
+          <img src="../../assets/possible-wall-patterns.png" width="640" height="276" loading="lazy" alt="three adjacent texture texels give seven possible outputs of four pixels each. the patterns are aaaa, aaab, aabb, abbb, aabc, abbc and abcc. the aabb pattern from the frame is highlighted.">
+        </figure>
+
+        <p>there are three steps from the first pixel to the fourth. if each step is smaller than <code>2/3</code> of a texel, the first and last samples are less than two texels apart. rounding down can land them in at most three adjacent texture rows. each step is also too short to skip a row on the way.</p>
+        <p>the patterns overlap. store <code>aaaab</code> and i can read both <code>aaaa</code> and <code>aaab</code>. one more <code>b</code> and there’s <code>aabb</code>, starting at the third byte. all seven fit into a 16-byte sequence this way. i prepare one of these for each starting texel.</p>
+
+        <figure>
+          <img src="../../assets/prepared-wall-strip.png" width="640" height="221" loading="lazy" alt="the 16-byte sequence aaaabbbabbcaabcc with four bytes highlighted starting at byte 3. the highlighted slice reads aabb.">
+        </figure>
+
+        <p>to pick the right slice, i start at eye height. with the camera looking straight ahead, a point at eye height lands halfway down the screen however close the wall is. in a 100-row frame, that line sits between rows 49 and 50. on this wall it meets the texture at <code>31</code>.</p>
+        <p>screen row <code>80</code> is <code>30.5</code> rows below that line. multiply that distance by <code>step</code> to get how far down the texture to sample.</p>
+
+        <pre class="chapter-code-wrap"><code>texture position = 31 + 30.5 * step</code></pre>
+
+        <figure>
+          <img src="../../assets/wall-texel-cutoff.png" width="640" height="212" loading="lazy" alt="at screen row 80, steps 0.458 and 0.4588 give texture positions 44.969 and 44.9934, both inside texel 44. step 0.460 gives position 45.030, inside texel 45.">
+        </figure>
+
+        <p><code>44.969</code> and <code>44.9934</code> both round down to <code>44</code>. this row starts picking a different texel when the position reaches <code>45</code>. that happens at a step of <code>(45 - 31) / 30.5</code>, about <code>0.459016</code>. that’s its cutoff.</p>
+        <p>this is where the whole number helps. if eye height hits texture row <code>32</code>, every sample moves down one whole texel. the steps at which they cross a boundary stay the same. if eye height hits <code>31.25</code>, even a step of <code>0.458</code> lands at <code>45.219</code>. the cutoff has moved.</p>
+        <p>each screen row contributes its own cutoffs. put them all in order and, between any two neighbors, every row keeps picking the same texel relative to eye height. that gives me a table of slice offsets for each interval. during a frame, postgres finds the interval for the wall’s step and uses those offsets to take four bytes at a time. near a cutoff, a tiny floating-point difference can pick the neighboring texel, so the regular sampler takes over.</p>
+
+        <p>i timed three passes through the same e1m3 route with the room cache off. drawing 1,025 frames took a median of <strong>2.74 s</strong> with single-byte updates, <strong>2.55 s</strong> with eight-byte updates, and <strong>2.37 s</strong> with the prepared strips added. the savings vary by level. in e1m3, the prepared strips took about <strong>9 MiB</strong> of extra texture storage. across two levels, i checked 1,709 frames and got the same pixels and shades from all three versions.</p>
       </article>
     </main>
   </body>
