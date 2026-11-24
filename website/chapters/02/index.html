@@ -20,7 +20,17 @@
         <a href="../03/" aria-label="chapter 3, making it playable"><span class="chapter-number">3</span></a>
         <a href="../04/" aria-label="chapter 4, dlss (kinda)"><span class="chapter-number">4</span></a>
       </nav>
-      <article class="chapter-body" aria-label="$5 worth of planetscale"></article>
+      <article class="chapter-body" aria-labelledby="budget-title">
+        <h1 id="budget-title">$5 worth of planetscale</h1>
+        <p>i gave myself a budget of $5 a month. on <a href="https://planetscale.com/">planetscale</a>, that gets me 1/16 of a vcpu and 512 mib of ram.</p>
+        <p>while you play doom, the engine keeps working out what happens in the game and drawing what you see. in our case, those calculations happen on the cpu. the time the cpu spends doing that work is called <em>cpu time</em>.</p>
+        <p>cloud providers allocate cpu capacity in units called vcpus. one full vcpu gives you enough capacity to keep one logical processor busy. keep it busy for a second and you’ve used 1,000 ms of cpu time. i get one sixteenth of that. for every second that goes by, i have <strong>62.5 ms of cpu time</strong> to work with.</p>
+        <p>unfortunately, i’d like a whole second of doom out of that. the game has to keep moving, and i’d like to see where it’s going. postgres has to do the database work in those same milliseconds, too. before it can work out where a monster goes next, it has to look up where it is. then it has to save the new position.</p>
+        <p>the 512 mib of ram is for the whole instance. doom’s textures can live on disk. once postgres reads a texture, it can keep it in memory so it’s handy for the next frame. the query drawing that frame needs room to work, too. it all fits into the same memory that postgres itself runs in.</p>
+        <p>let’s say we somehow get doom running on all that. how do i actually play it?</p>
+        <p>i press <code>w</code>. my client reads the keypress, turns it into a query that tells postgres i want to move forward, and sends it over the internet to planetscale. postgres works out whether i can move, updates the game, and draws what i should see. then the frame has to make it back to my client so it can put it on screen.</p>
+        <p>all that for one step forward. the time spent going to the server and back over the network is the <em>round-trip time</em>, or rtt. postgres uses its cpu budget for the work it does in the middle. even if it could draw the frame instantly, i’d still be waiting for that trip.</p>
+      </article>
     </main>
   </body>
 </html>
