@@ -5,24 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>making it playable / doompgsql</title>
     <link rel="icon" href="../../favicon.ico" sizes="16x16 32x32 48x48">
-    <link rel="stylesheet" href="../../styles.css">
+    <link rel="stylesheet" href="../../styles.css?v=wall-column">
+    <script src="outline.js" defer></script>
   </head>
   <body class="chapter">
+    <a class="chapter-skip" href="#playable-title">skip to content</a>
     <header class="site-header">
       <a class="chapter-home site-brand" href="../../" aria-label="doom-pgsql home">
         <img src="../../assets/logo.png" width="476" height="70" alt="doom-pgsql">
       </a>
       <a class="site-source" href="https://github.com/fatihguzeldev/doom-pgsql">github</a>
     </header>
-    <main class="chapter-shell">
+    <main class="chapter-shell chapter-shell-with-outline">
       <nav class="chapter-switcher" aria-label="chapters">
         <a href="../01/" aria-label="chapter 1, the story"><span class="chapter-number">1</span></a>
         <a href="../02/" aria-label="chapter 2, $5 worth of planetscale"><span class="chapter-number">2</span></a>
         <a href="../03/" aria-label="chapter 3, making it playable" aria-current="page"><span class="chapter-number">3</span></a>
         <a href="../04/" aria-label="chapter 4, dlss (kinda)"><span class="chapter-number">4</span></a>
       </nav>
+      <nav class="chapter-outline" aria-label="sections in this chapter">
+        <button class="chapter-outline-toggle" type="button" aria-expanded="false" aria-controls="chapter-outline-links" hidden>
+          <span>making it playable</span>
+        </button>
+        <ul id="chapter-outline-links" class="chapter-outline-links" role="list">
+          <li><a href="#playable-title">making it playable</a></li>
+          <li><a href="#the-cost-of-taking-a-step">the cost of taking a step</a></li>
+          <li><a href="#drawing-the-room-once">drawing the room once</a></li>
+          <li><a href="#drawing-a-wall-column">eight pixels at a time</a></li>
+          <li><a href="#how-a-keypress-gets-through">how a keypress gets through</a></li>
+          <li><a href="#sending-only-what-changed">sending only what changed</a></li>
+        </ul>
+      </nav>
       <article class="chapter-body" aria-labelledby="playable-title">
-        <h1 id="playable-title">making it playable</h1>
+        <h1 id="playable-title" tabindex="-1">making it playable</h1>
         <pre><code class="language-c"><span class="syntax-keyword">for</span> (<span class="syntax-keyword">int</span> i = <span class="syntax-literal">0</span>; i &lt; <span class="syntax-literal">4</span>; i++)
     strip[i] = texture[start + i];</code></pre>
         <p>4 bytes from a texture into a buffer. here, <code>strip</code> holds the colors for 4 pixels i’m drawing in one column of a wall. it’s already in memory, so c can go straight to <code>strip[i]</code> and change that one byte. the next iteration writes into the same buffer. with a postgres <code>bytea</code>, i’d call <code>set_byte</code> and assign the result back to <code>strip</code>. <code>set_byte</code> copies the whole value before changing the byte. 4 iterations, 4 copies of the buffer.</p>

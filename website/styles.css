@@ -221,6 +221,176 @@ img {
   color: var(--canvas);
 }
 
+.chapter-skip {
+  position: fixed;
+  z-index: 2;
+  inset-block-start: .75rem;
+  inset-inline-start: var(--gutter);
+  padding: .5rem .75rem;
+  background: var(--surface);
+}
+
+.chapter-skip:not(:focus) {
+  clip-path: inset(50%);
+}
+
+.chapter-shell-with-outline {
+  --chapter-anchor-offset: 4.5rem;
+}
+
+.chapter-shell-with-outline .chapter-body :where(h1, h2)[id] {
+  scroll-margin-block-start: var(--chapter-anchor-offset);
+}
+
+.chapter-shell-with-outline .chapter-body :where(h1, h2)[id]:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: .25rem;
+}
+
+.chapter-outline {
+  max-inline-size: var(--reading-width);
+  margin: .75rem auto 0;
+  font-size: .9375rem;
+  line-height: 1.4;
+}
+
+.chapter-outline-toggle {
+  display: none;
+}
+
+.chapter-outline-links {
+  margin: 0;
+  padding: 0;
+  border-inline-start: 1px solid var(--rule);
+  list-style: none;
+}
+
+.chapter-outline a {
+  display: block;
+  min-block-size: 2.75rem;
+  margin-inline-start: -1px;
+  padding: .75rem .875rem;
+  border-inline-start: 2px solid transparent;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.chapter-outline a[aria-current="location"] {
+  border-inline-start-color: var(--steel);
+  color: var(--steel);
+  font-weight: 600;
+}
+
+.chapter-outline a:is(:hover, :focus-visible) {
+  color: var(--amber);
+}
+
+.chapter-outline a:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (width < 68rem) {
+  .chapter-outline:has(.chapter-outline-toggle:not([hidden])) {
+    position: sticky;
+    z-index: 1;
+    inset-block-start: 0;
+    padding-block-start: .5rem;
+    background: var(--canvas);
+  }
+
+  .chapter-outline-toggle:not([hidden]) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    inline-size: 100%;
+    min-block-size: 2.75rem;
+    padding: .625rem .875rem;
+    border: 1px solid var(--rule);
+    border-radius: .1875rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .chapter-outline-toggle span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .chapter-outline-toggle::after {
+    content: "";
+    flex: none;
+    inline-size: .5rem;
+    block-size: .5rem;
+    margin-inline-end: .125rem;
+    border-inline-end: 1px solid;
+    border-block-end: 1px solid;
+    color: var(--steel);
+    transform: translateY(-.125rem) rotate(45deg);
+  }
+
+  .chapter-outline-toggle[aria-expanded="true"]::after {
+    transform: translateY(.125rem) rotate(225deg);
+  }
+
+  .chapter-outline-toggle:focus-visible {
+    outline: 2px solid var(--steel);
+    outline-offset: 2px;
+  }
+
+  .chapter-outline-toggle:not([hidden]) + .chapter-outline-links {
+    position: absolute;
+    inset-block-start: calc(100% + .25rem);
+    inset-inline: 0;
+    max-block-size: 60vh;
+    overflow: auto;
+    border: 1px solid var(--rule);
+    border-radius: .1875rem;
+    background: var(--surface);
+  }
+
+  .chapter-outline-toggle:not([hidden])[aria-expanded="false"] + .chapter-outline-links {
+    display: none;
+  }
+}
+
+@media (min-width: 68rem) {
+  .chapter-shell-with-outline {
+    --chapter-anchor-offset: 2rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--reading-width) minmax(0, 1fr);
+    column-gap: 1.75rem;
+    inline-size: calc(100% - 2 * var(--gutter));
+  }
+
+  .chapter-shell-with-outline > .chapter-switcher {
+    grid-area: 1 / 2;
+    inline-size: 100%;
+  }
+
+  .chapter-shell-with-outline > .chapter-body {
+    grid-area: 2 / 2;
+    min-inline-size: 0;
+    inline-size: 100%;
+  }
+
+  .chapter-outline {
+    grid-area: 2 / 3;
+    position: sticky;
+    inset-block-start: var(--chapter-anchor-offset);
+    align-self: start;
+    inline-size: min(100%, 15rem);
+    max-block-size: calc(100vh - 2 * var(--chapter-anchor-offset));
+    overflow: auto;
+    margin: 2rem 0 0;
+  }
+}
+
 .chapter-body {
   padding-block: clamp(1.5rem, 4vw, 2rem) clamp(2rem, 6vw, 4rem);
   overflow-wrap: anywhere;
