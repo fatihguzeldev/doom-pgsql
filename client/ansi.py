@@ -1,6 +1,9 @@
+import base64
 import re
 import shutil
+import struct
 import unicodedata
+import zlib
 from functools import lru_cache
 
 BACKGROUND = "\x1b[48;2;18;14;23m"
@@ -70,6 +73,20 @@ def image_rows(picture, width, height):
                 row.append("▀")
         result.append("".join(row))
     return result
+
+
+@lru_cache(maxsize=1)
+def inline_picture(picture, cols, rows):
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", picture.width, picture.height, 8, 2, 0, 0, 0)
+    stride = 3 * picture.width
+    scanlines = b"".join(b"\0" + picture.rgb[i:i + stride] for i in range(0, len(picture.rgb), stride))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header)
+           + chunk(b"IDAT", zlib.compress(scanlines, 1)) + chunk(b"IEND", b""))
+    payload = base64.b64encode(png).decode("ascii")
+    return f"\x1b]1337;File=inline=1;width={cols};height={rows};preserveAspectRatio=0:{payload}\a"
 
 
 class Page:

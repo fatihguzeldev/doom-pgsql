@@ -1,9 +1,11 @@
 import math
+import os
 import sys
 
-from .ansi import BACKGROUND, SGR, Page, cell_width, fit_image, fit_text, image_rows
+from .ansi import BACKGROUND, SGR, Page, cell_width, fit_image, fit_text, image_rows, inline_picture
 from .art import Image
 from .automap import EXIT_FLAG
+from .hud import panel_rows
 from .widgets import (
     COPPER,
     EDGE,
@@ -51,14 +53,21 @@ class Display:
         self._world = None
         self._render_key = self._title_key = None
         self._rendered = self._title_rows = ()
+        self._inline = (
+            os.getenv("TERM_PROGRAM") == "iTerm.app"
+            and not os.getenv("TMUX")
+            and not os.getenv("TERM", "").startswith(("screen", "tmux"))
+        )
+        self._overlay = None
 
-    def _present(self, page):
+    def _present(self, page, overlay=None):
         size = (page.width, page.height)
         output = []
         if self._size != size:
             output.append(BACKGROUND + "\x1b[2J")
             self._previous = [[] for _ in page.rows]
             self._size = size
+            self._overlay = None
         for y, (before, after) in enumerate(zip(self._previous, page.rows), 1):
             if before == after:
                 continue
@@ -66,6 +75,10 @@ class Display:
                 output.append(f"\x1b[{y};1H" + BACKGROUND + "\x1b[2K")
             for x, text in after:
                 output.extend((f"\x1b[{y};{x + 1}H", BACKGROUND, text))
+        if overlay and self._overlay != overlay:
+            x, y, picture = overlay
+            output.extend((f"\x1b[{y + 1};{x + 1}H", picture))
+        self._overlay = overlay
         self._previous = page.rows
         if output:
             sys.stdout.write("".join(output) + "\x1b[0m")
@@ -104,31 +117,19 @@ class Display:
         page.centered(y + 2, footer if len(footer) <= page.space else "Q quit", VIOLET)
         self._present(page)
 
-    def _game_rows(self, world, status, turn, shot_age, cols, rows):
+    def _game_rows(self, world, alive, turn, shot_age, cols, rows):
         if world is not self._world:
             self._world = world
             self._render_key = None
-        health, armor, ammo = (status.get(key, 0) for key in ("health", "armor", "ammo"))
         shot_tic = int(35 * shot_age) if shot_age is not None else None
-        keys = status.get("keys", 0)
-        key = (turn, health, armor, ammo, keys, shot_tic, cols, rows)
+        key = (turn, alive, shot_tic, cols, rows)
         if self._render_key != key:
             image = _reproject(self._world, turn)
-            if self.art is not None:
-                image = self.art.compose(
-                    image, health=health, armor=armor, ammo=ammo, keys=keys, shot_age=shot_tic,
-                    status_bar=self._full_status_bar(world, cols, rows),
-                )
+            if alive and self.art is not None:
+                image = self.art.draw_weapon(image, shot_tic)
             self._rendered = image_rows(image, cols, rows)
             self._render_key = key
         return self._rendered
-
-    def _full_status_bar(self, world, cols, rows):
-        # half-block cells provide one pixel across and two pixels down
-        return (
-            self.art is not None and self.art.has_status_bar
-            and min(world.width, cols) >= 320 and min(world.height, 2 * rows) >= 200
-        )
 
     def paint(
         self, world, status, turn=0.0, fps=0.0, shot_age=None, *, phase=0, lit_keys=frozenset(),
@@ -139,6 +140,7 @@ class Display:
         controls = control_rows(page.space, status.get("auto_walk", False), lit_keys)
         if len(controls) + 4 > page.height:
             controls = [(8, keycap("esc", 3, lit_keys) + TEXT + " menu")] if page.space >= 8 else []
+        original_hud = self.art is not None and self.art.has_status_bar
         footer = len(controls) + 1 + int(page.height >= 28)
         above_fps = int(page.height >= 22)
         below_fps = int(page.height >= 18)
@@ -146,7 +148,7 @@ class Display:
         compact = map_ready and page.height <= 25
         header = (1 + int(page.height >= 16)) if compact else len(logo) + above_fps + 1 + below_fps
         reserve = max(header, footer)
-        usable = max(1, page.height - (header + footer if map_ready else 2 * reserve))
+        usable = max(1, page.height - (header + footer if map_ready or original_hud else 2 * reserve))
         has_map = map_ready and usable >= 4 and page.space >= 24
         side = has_map and (page.space >= 54 or (usable < 10 and page.space >= 35))
         map_width = map_height = 0
@@ -158,7 +160,14 @@ class Display:
             map_width = min(page.space, 32)
             map_height = min(7, usable // 3)
             room_h -= map_height + 1
-        cols, rows = fit_image(world.width, world.height, room_w, room_h)
+        hud_h = 1
+        if original_hud:
+            # fit the world and its 320x32 status bar to the same width
+            cols, stack_h = fit_image(world.width * 10, world.height * 10 + world.width, room_w, room_h + 1)
+            hud_h = max(1, min(round(cols / 20), stack_h - 1))
+            rows = max(1, stack_h - hud_h)
+        else:
+            cols, rows = fit_image(world.width, world.height, room_w, room_h)
         if not cols:
             self._present(page)
             return
@@ -166,8 +175,8 @@ class Display:
             map_height = min(max(3, map_width // 2), rows - 1)
         below_map = map_height + 1 if map_height and not side else 0
         x = (page.width - cols - (map_width + 2 if side else 0)) // 2
-        y = ((page.height - rows) // 2 if not has_map
-             else header + (usable - rows - below_map) // 2)
+        y = ((page.height - rows) // 2 if not has_map and not original_hud
+             else header + (usable + 1 - rows - hud_h - below_map) // 2)
         readout = "FPS —" if fps is None else f"FPS {fps:.1f}".removesuffix(".0")
         if compact:
             span = cols + (map_width + 2 if side else 0)
@@ -181,31 +190,37 @@ class Display:
                 page.put(x + cols - len(readout), fps_y, VIOLET + readout)
             else:
                 page.centered(fps_y, readout, VIOLET)
-        for i, row in enumerate(self._game_rows(world, status, turn, shot_age, cols, rows)):
+        health = status.get("health", 0)
+        for i, row in enumerate(self._game_rows(world, health > 0, turn, shot_age, cols, rows)):
             page.put(x, y + i, row)
         below = y + rows
+        hud_w = cols if original_hud else max(cols, min(page.space, 42))
+        hud_x = x if original_hud else max(0, min(page.width - hud_w - 1, x - (hud_w - cols) // 2))
+        values = health, status.get("armor", 0), status.get("ammo", 0), status.get("keys", 0)
+        overlay = None
+        if original_hud and self._inline and 0 <= below <= page.height - hud_h:
+            overlay = (hud_x, below, inline_picture(self.art.status_bar(*values), hud_w, hud_h))
+            # reserve each image row so menu changes clear the whole picture
+            hud = (" " * hud_w,) * hud_h
+        else:
+            hud = panel_rows(hud_w, hud_h, self.art, *values)
+        for i, row in enumerate(hud):
+            page.put(hud_x, below + i, row)
+        below += hud_h
         if map_height > 0:
             mx = x + cols + 2 if side else (page.width - map_width) // 2
-            my = y + (rows - map_height - 1) // 2 if side else below + 1
+            my = y + (rows - map_height - 1) // 2 if side else below
             label = f"AUTOMAP  {EXIT_FLAG} exit" if map_width >= 21 else "AUTOMAP"
             title = label.ljust(map_width - 3) + "N ↑"
             page.put(mx, my, VIOLET + title)
             for i, row in enumerate(automap.rows(*pose, map_width, map_height), 1):
                 page.put(mx, my + i, row)
-        hud = f"HP {status.get('health', 0)}%   ARM {status.get('armor', 0)}%   AMMO {status.get('ammo', 0)}"
-        keys = [
-            label for bit, label in ((1, "Blue"), (2, "Yellow"), (4, "Red")) if status.get("keys", 0) & bit
-        ]
-        if keys:
-            hud += "   KEYS " + "/".join(keys)
-        if not self._full_status_bar(world, cols, rows):
-            page.centered(below, hud, GOLD)
-        below += 1 + below_map
+        below += below_map
         if page.height >= 28:
             below += 1
         for i, (used, line) in enumerate(controls):
             page.put((page.width - used) // 2, below + i, line)
-        self._present(page)
+        self._present(page, overlay)
 
     def menu(self, title, items, selected=0, *, art=None, phase=0, adjustable=False, lit_keys=frozenset()):
         page = Page()

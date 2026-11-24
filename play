@@ -81,6 +81,9 @@ cleanup() {
 }
 
 if [[ -t 0 && -t 1 ]]; then
+    if [[ ${TERM_PROGRAM:-} == iTerm.app && -z ${TMUX:-} && ${TERM:-} != screen* && ${TERM:-} != tmux* ]]; then
+        run_options+=(-e TERM_PROGRAM=iTerm.app)
+    fi
     source "$repo/client/loading.sh"
     compose+=(--progress=quiet)
     runtime=$(mktemp -d)

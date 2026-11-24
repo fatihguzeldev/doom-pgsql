@@ -1,13 +1,17 @@
+import base64
 import io
 import math
 import os
 import re
+import struct
 import unittest
+import zlib
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
-from client.ansi import SGR, cell_width
-from client.art import Image
+from client.ansi import SGR, cell_width, image_rows
+from client.art import Art, Image
 from client.automap import Automap
 from client.display import Display
 from client.widgets import (
@@ -36,6 +40,61 @@ STATUS = {"map": "E1M1", "game": 1, "health": 100, "armor": 0, "ammo": 50}
 
 
 class KeycapsTest(unittest.TestCase):
+    def test_hud_keeps_its_detail_and_updates_without_a_new_frame(self):
+        art = Art.from_bytes((Path(__file__).resolve().parents[1] / "assets/doom1.wad").read_bytes())
+        with patch.dict(os.environ, {"TERM_PROGRAM": "iTerm.app", "TMUX": "", "TERM": "xterm-256color"}):
+            display = Display(art)
+        map_args = {"automap": Automap([]), "pose": (0, 0, 0)}
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((136, 41))):
+            for i, (w, h) in enumerate(((64, 40), (160, 100), (320, 200))):
+                world = Image(w, h, bytes((3, 5, 7)) * (w * h))
+                with redirect_stdout(io.StringIO()) as output:
+                    display.paint(world, STATUS, **map_args)
+                self.assertEqual("]1337;File=" in output.getvalue(), i == 0)
+            x, y, sequence = display._overlay
+            width, height, payload = re.search(r"width=(\d+);height=(\d+);preserveAspectRatio=0:(.+)\a", sequence).groups()
+            png = base64.b64decode(payload)
+            self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack_from(">II", png, 16), (320, 32))
+            compressed = png[41:41 + struct.unpack_from(">I", png, 33)[0]]
+            scanlines = zlib.decompress(compressed)
+            expected = art.status_bar(100, 0, 50, 0)
+            self.assertEqual(scanlines, b"".join(b"\0" + expected.rgb[i:i + 960] for i in range(0, len(expected.rgb), 960)))
+            last_world_row = next(line for col, line in display._previous[y - 1] if col == x)
+            self.assertEqual(cell_width(SGR.sub("", last_world_row)), int(width))
+            self.assertGreaterEqual(int(height), 3)
+            with redirect_stdout(io.StringIO()) as update:
+                display.paint(world, dict(STATUS, health=37, armor=25, ammo=47, keys=5), **map_args)
+            self.assertIn("]1337;File=", update.getvalue())
+            self.assertNotEqual(sequence, display._overlay[2])
+            self.assertNotIn("48;2;3;5;7m", update.getvalue())
+
+            with redirect_stdout(io.StringIO()) as menu:
+                display.menu("Paused", ["Resume"])
+            for row in range(y + 1, y + int(height) + 1):
+                self.assertIn(f"\x1b[{row};1H", menu.getvalue())
+            with redirect_stdout(io.StringIO()) as resume:
+                display.paint(world, STATUS, **map_args)
+            self.assertIn(sequence, resume.getvalue())
+
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))), redirect_stdout(io.StringIO()) as resized:
+            display.paint(world, STATUS, **map_args)
+        self.assertIn("]1337;File=", resized.getvalue())
+        self.assertNotEqual(sequence, display._overlay[2])
+
+    def test_status_bar_uses_wad_pixels_on_ansi_terminals(self):
+        art = Art.from_bytes((Path(__file__).resolve().parents[1] / "assets/doom1.wad").read_bytes())
+        with patch.dict(os.environ, {"TERM_PROGRAM": ""}):
+            display = Display(art)
+        with patch("shutil.get_terminal_size", return_value=os.terminal_size((136, 41))), redirect_stdout(io.StringIO()):
+            display.paint(WORLD, STATUS, automap=Automap([]), pose=(0, 0, 0))
+        world_rows = [(x, y, cell_width(SGR.sub("", line))) for y, row in enumerate(display._previous)
+                      for x, line in row if "48;2;3;5;7m" in line]
+        x, y, width = world_rows[-1]
+        expected = image_rows(art.status_bar(100, 0, 50, 0), width, round(width / 20))
+        for i, row in enumerate(expected, 1):
+            self.assertIn((x, row), display._previous[y + i])
+
     def test_automap_sits_outside_the_view_and_hud(self):
         automap = Automap([(-48, -48, 48, -48, "wall")])
         for width, height in ((42, 27), (60, 20), (80, 24), (144, 44)):
@@ -55,7 +114,8 @@ class KeycapsTest(unittest.TestCase):
                         plain.append(text)
                 self.assertTrue(any("AUTOMAP" in s for s in plain))
                 self.assertTrue(any("↗" in s for s in plain))
-                self.assertTrue(any("HP 100%" in s and "AMMO 50" in s for s in plain))
+                self.assertIn("AMMO", " ".join(plain))
+                self.assertIn("100%", " ".join(plain))
 
     def test_physical_keys_and_combinations(self):
         pressed = {"w", "a", "right", "l", " ", "e"}
@@ -94,7 +154,7 @@ class KeycapsTest(unittest.TestCase):
         with patch("shutil.get_terminal_size", return_value=os.terminal_size((80, 24))):
             with redirect_stdout(io.StringIO()) as initial:
                 display.paint(WORLD, STATUS)
-            self.assertIn("HP 100%", initial.getvalue())
+            self.assertIn("100%", initial.getvalue())
             self.assertIn("FPS 0", initial.getvalue())
             with redirect_stdout(io.StringIO()) as down:
                 display.paint(WORLD, STATUS, lit_keys={"w", " "})
@@ -106,7 +166,7 @@ class KeycapsTest(unittest.TestCase):
             self.assertNotIn(KEY_CYAN, released.getvalue())
             for update in (down, released):
                 self.assertNotIn("48;2;3;5;7m", update.getvalue())
-                self.assertNotIn("HP 100%", update.getvalue())
+                self.assertNotIn("100%", update.getvalue())
 
     def test_single_fps_label_keeps_only_meaningful_decimals(self):
         display = Display()

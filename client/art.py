@@ -98,16 +98,16 @@ def _sound_wav(data):
     return b"RIFF" + riff_size + b"WAVEfmt " + header + b"data" + struct.pack("<I", len(pcm)) + pcm + pad
 
 
-def _opaque_runs(image, x, y, width, height, bottom):
+def _opaque_runs(image, x, y, width, height, source_height=200):
     x -= image.left
     y -= image.top
     x0 = max(0, (x * width + 319) // 320)
     x1 = min(width, ((x + image.width) * width + 319) // 320)
-    y0 = max(0, (y * height + 199) // 200)
-    y1 = min(bottom, ((y + image.height) * height + 199) // 200)
+    y0 = max(0, (y * height + source_height - 1) // source_height)
+    y1 = min(height, ((y + image.height) * height + source_height - 1) // source_height)
     columns = [dx * 320 // width - x for dx in range(x0, x1)]
     for dy in range(y0, y1):
-        row = (dy * 200 // height - y) * image.width
+        row = (dy * source_height // height - y) * image.width
         offset = (dy * width + x0) * 3
         run = bytearray()
         for col in columns:
@@ -122,6 +122,23 @@ def _opaque_runs(image, x, y, width, height, bottom):
             yield offset - len(run), bytes(run)
 
 
+_STATUS_PATCHES = (
+    "STBAR", "STARMS", "STTPRCNT",
+    *(f"STTNUM{n}" for n in range(10)),
+    *(f"STYSNUM{n}" for n in range(10)),
+    *(f"STGNUM{n}" for n in range(3, 8)),
+    *(f"STKEYS{n}" for n in range(3)),
+    *(f"STFST{n}0" for n in range(5)), "STFDEAD0",
+)
+
+
+def _stamp(canvas, image, x, y):
+    if image is None:
+        return
+    for offset, pixels in _opaque_runs(image, x, y, 320, 32, source_height=32):
+        canvas[offset : offset + len(pixels)] = pixels
+
+
 class Art:
     def __init__(self, images, maps, sounds, music):
         self.title = images.get("TITLEPIC")
@@ -130,14 +147,28 @@ class Art:
         self.sounds = sounds
         self.music = music
         self._images = images
-        bar = images.get("STBAR")
-        self.has_status_bar = (
-            bar is not None
-            and (bar.width, bar.height) == (320, 32)
-            and all(f"STTNUM{i}" in images for i in range(10))
-        )
         self._overlay_key = None
         self._runs = ()
+        bar = images.get("STBAR")
+        self.has_status_bar = (
+            bar is not None and (bar.width, bar.height) == (320, 32)
+            and all(f"STTNUM{n}" in images for n in range(10))
+        )
+        if self.has_status_bar:
+            canvas = bytearray(bar.rgb)
+            _stamp(canvas, images.get("STARMS"), 104, 0)
+            for i, slot in enumerate(range(2, 8)):
+                prefix = "STYSNUM" if slot == 2 else "STGNUM"
+                _stamp(canvas, images.get(f"{prefix}{slot}"), 111 + 12 * (i % 3), 4 + 10 * (i // 3))
+            for x in (90, 221):
+                _stamp(canvas, images.get("STTPRCNT"), x, 3)
+            # the engine has one ammo pool, with a pickup cap of 400 rounds
+            for row, maximum in enumerate((400, 0, 0, 0)):
+                y = 5 + 6 * row
+                self._bar_number(canvas, "STYSNUM", maximum, 314, y)
+                if row:
+                    self._bar_number(canvas, "STYSNUM", 0, 288, y)
+            self._bar_background = bytes(canvas)
 
     @classmethod
     def from_bytes(cls, wad):
@@ -145,21 +176,13 @@ class Art:
         palette = lumps.get("PLAYPAL", b"")
         names = [
             "TITLEPIC",
-            "STBAR",
-            "STTPRCNT",
-            "STARMS",
-            "STFDEAD0",
             "PISFA0",
             "M_SKULL1",
             "PISGA0",
             "PISGB0",
             "PISGC0",
-            "STKEYS0",
-            "STKEYS1",
-            "STKEYS2",
         ]
-        names += [f"STFST{i}0" for i in range(5)]
-        names += [f"{prefix}{i}" for prefix in ("STTNUM", "STYSNUM", "STGNUM") for i in range(10)]
+        names.extend(_STATUS_PATCHES)
         images = {}
         for name in names:
             image = _patch(lumps.get(name, b""), palette)
@@ -175,58 +198,50 @@ class Art:
         }
         return cls(images, maps, sounds, music)
 
-    def _hud(self, health, armor, ammo, keys):
-        yield "STBAR", 0, 168
-        yield "STARMS", 104, 168
-        for slot in range(6):
-            prefix = "STYSNUM" if slot == 0 else "STGNUM"
-            yield f"{prefix}{slot + 2}", 111 + slot % 3 * 12, 172 + slot // 3 * 10
-        for slot, mask in enumerate((1, 4, 2)):
-            if keys & mask:
-                yield f"STKEYS{slot}", 239, 171 + 10 * slot
+    def face(self, health):
         tier = (100 - min(100, max(0, health))) * 5 // 101
-        yield "STFDEAD0" if health <= 0 else f"STFST{tier}0", 143, 168
-        for value, right, y, digits, width in (
-            (ammo, 44, 171, "STTNUM", 14),
-            (health, 90, 171, "STTNUM", 14),
-            (armor, 221, 171, "STTNUM", 14),
-            (ammo, 288, 173, "STYSNUM", 4),
-        ):
-            for place, digit in enumerate(reversed(str(max(0, min(999, value)))), 1):
-                yield digits + digit, right - width * place, y
-        for x in (90, 221):
-            yield "STTPRCNT", x, 171
+        return self._images.get("STFDEAD0" if health <= 0 else f"STFST{tier}0")
 
-    def compose(self, world, *, health, armor, ammo, keys=0, shot_age=None, status_bar=True):
-        w, h = world.width, world.height
-        show_bar = self.has_status_bar and status_bar
-        if not show_bar and "PISGA0" not in self._images:
+    def _bar_number(self, canvas, prefix, value, right, y):
+        zero = self._images.get(prefix + "0")
+        if zero is None:
+            return
+        for digit in reversed(str(min(999, max(0, value)))):
+            right -= zero.width
+            _stamp(canvas, self._images.get(prefix + digit), right, y)
+
+    @lru_cache(maxsize=1)
+    def status_bar(self, health, armor, ammo, keys):
+        if not self.has_status_bar:
+            return None
+        canvas = bytearray(self._bar_background)
+        for value, right in ((ammo, 44), (health, 90), (armor, 221)):
+            self._bar_number(canvas, "STTNUM", value, right, 3)
+        self._bar_number(canvas, "STYSNUM", ammo, 288, 5)
+        _stamp(canvas, self.face(health), 143, 0)
+        for slot in range(3):
+            if keys & (1 << slot):
+                _stamp(canvas, self._images.get(f"STKEYS{slot}"), 239, 3 + 10 * slot)
+        return Image(320, 32, bytes(canvas))
+
+    def draw_weapon(self, world, shot_tic=None):
+        weapon = self._images.get("PISGA0")
+        if weapon is None:
             return world
-        view_h = 168 if show_bar else 200
-        bottom = (h * view_h + 199) // 200
-        gun, flash = "PISGA0", False
-        if shot_age is not None and 0 <= shot_age < 8:
-            gun = "PISGC0" if 3 <= shot_age < 6 else "PISGB0"
-            flash = shot_age < 3
-        key = w, h, show_bar, health, armor, ammo, keys, gun, flash
+        flash = None
+        if shot_tic is not None and 0 <= shot_tic < 8:
+            gun = "PISGC0" if 3 <= shot_tic < 6 else "PISGB0"
+            weapon = self._images.get(gun, weapon)
+            if shot_tic < 3:
+                flash = self._images.get("PISFA0")
+        w, h = world.width, world.height
+        key = (w, h, weapon, flash)
         if key != self._overlay_key:
-            runs = []
-            if health > 0:
-                origin = view_h // 2 - 100 + 32
-                weapon = self._images.get(gun) or self._images.get("PISGA0")
-                if weapon is not None:
-                    runs.extend(_opaque_runs(weapon, 0, origin, w, h, bottom))
-                if flash and "PISFA0" in self._images:
-                    runs.extend(_opaque_runs(self._images["PISFA0"], 0, origin, w, h, bottom))
-            if show_bar:
-                for name, x, y in self._hud(health, armor, ammo, keys):
-                    if name in self._images:
-                        runs.extend(_opaque_runs(self._images[name], x, y, w, h, h))
-            self._runs = runs
+            self._runs = list(_opaque_runs(weapon, 0, 32, w, h))
+            if flash is not None:
+                self._runs.extend(_opaque_runs(flash, 0, 32, w, h))
             self._overlay_key = key
-        crop = (h - bottom) // 2 * w * 3
-        canvas = bytearray(world.rgb[crop : crop + bottom * w * 3])
-        canvas.extend(bytes((h - bottom) * w * 3))
+        canvas = bytearray(world.rgb)
         for start, pixels in self._runs:
             canvas[start : start + len(pixels)] = pixels
         return Image(w, h, bytes(canvas))

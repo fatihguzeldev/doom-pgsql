@@ -7,8 +7,22 @@ import sys
 import termios
 import time
 from contextlib import contextmanager
+from functools import lru_cache
+from pathlib import Path
 
 import psycopg
+
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from client.ansi import inline_picture
+from client.art import Art
+
+
+@lru_cache(maxsize=1)
+def hud_payload(ammo, health=100, armor=0):
+    art = Art.from_bytes((Path(__file__).resolve().parents[1] / "assets/doom1.wad").read_bytes())
+    return inline_picture(art.status_bar(health, armor, ammo, 0), 1, 1).partition(":")[2].encode()
 
 
 class Terminal:
@@ -32,6 +46,9 @@ class Terminal:
         output, self.buffer = self.buffer[: match.end()], self.buffer[match.end() :]
         return output
 
+    def hud(self, ammo, health=100, armor=0):
+        self.until(re.escape(hud_payload(ammo, health, armor)))
+
     def quit(self, proc):
         self.send(b"q")
         self.until(rb"\x1b\[\?1049l", timeout=2)
@@ -45,6 +62,7 @@ def client(*args):
         termios.tcsetwinsize(slave, (30, 96))
         cmd = [sys.executable, "-B", "-m", "client.play", "--mute", *args]
         env = {k: v for k, v in os.environ.items() if k not in ("COLUMNS", "LINES")}
+        env.update(TERM_PROGRAM="iTerm.app", TERM="xterm-256color", TMUX="")
         with subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave, env=env) as proc:
             try:
                 yield Terminal(master), proc
@@ -60,6 +78,8 @@ def resize_game(tty, rows, cols):
     termios.tcsetwinsize(tty.fd, (rows, cols))
     tty.until(rb"\x1b\[2J")
     redraw = tty.until(rb"\x1b\[0m")
+    assert hud_payload(49) in redraw
+    redraw = re.sub(rb"\x1b\]1337;File=[^\a]*\a", b"", redraw)
     spans = re.split(rb"\x1b\[(\d+);(\d+)H", redraw)[1:]
     visible = []
     for row, column, run in zip(spans[::3], spans[1::3], spans[2::3]):
@@ -67,7 +87,7 @@ def resize_game(tty, rows, cols):
         assert 1 <= int(row) <= rows and 1 <= int(column) <= cols - len(label) + 1, (row, column, label)
         visible.append(label)
     page = "\n".join(visible)
-    for label in ("FPS", "▀", "AMMO 49", "Esc"):
+    for label in ("FPS", "▀", "Esc"):
         assert label in page, f"{label!r} missing at {cols}x{rows}"
     assert not re.search(r"SQL FPS|E1M1|GAME \d+", page), page
 
@@ -95,9 +115,9 @@ def run():
             tty.send(b"\x1b[A\x1b[A\r")
             tty.until(b"Loading E1M1")
             tty.until(("█" * 40).encode())
-            tty.until(b"AMMO 50")
+            tty.hud(50)
             tty.send(b" ")
-            tty.until(b"AMMO 49")
+            tty.hud(49)
             [(game, name, ammo, cooldown, skill)] = db.execute(
                 """SELECT g.id, l.name, g.ammo, g.next_shot, g.difficulty
                    FROM doom.games g JOIN doom.levels l ON g.level=l.id WHERE g.id>%s""",
@@ -121,7 +141,7 @@ def run():
                     break
                 assert time.monotonic() < end, "game continued ticking behind the pause menu"
             tty.send(b"\r")
-            tty.until(b"AMMO 49")
+            tty.hud(49)
             resize_game(tty, 20, 60)
             end = time.monotonic() + 2
             while tic() <= paused:
@@ -141,7 +161,7 @@ def run():
             preceding = len(re.findall(rb"#\d+   ", saves)) - 1
             tty.send(b"\x1b[B" * preceding + b"\r")
             tty.until(f"Loading game #{game}".encode())
-            tty.until(b"AMMO 49")
+            tty.hud(49)
 
             with db.transaction():
                 db.execute("UPDATE doom.games SET armor=25,keys=1 WHERE id=%s", (game,))
@@ -155,7 +175,7 @@ def run():
             tty.until(b"Next map")
             tty.send(b"\r")
             tty.until(b"Loading E1M2")
-            tty.until(b"HP 87%   ARM 25%   AMMO 49")
+            tty.hud(49, health=87, armor=25)
             advanced = db.execute(
                 """SELECT l.name, g.keys FROM doom.games g
                    JOIN doom.levels l ON g.level=l.id WHERE g.id>%s""",
