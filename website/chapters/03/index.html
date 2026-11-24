@@ -23,7 +23,7 @@
       </nav>
       <article class="chapter-body" aria-labelledby="playable-title">
         <h1 id="playable-title">making it playable</h1>
-        <pre><code>for (int i = 0; i &lt; 4; i++)
+        <pre><code class="language-c"><span class="syntax-keyword">for</span> (<span class="syntax-keyword">int</span> i = <span class="syntax-literal">0</span>; i &lt; <span class="syntax-literal">4</span>; i++)
     strip[i] = texture[start + i];</code></pre>
         <p>4 bytes from a texture into a buffer. here, <code>strip</code> holds the colors for 4 pixels i’m drawing in one column of a wall. it’s already in memory, so c can go straight to <code>strip[i]</code> and change that one byte. the next iteration writes into the same buffer. with a postgres <code>bytea</code>, i’d call <code>set_byte</code> and assign the result back to <code>strip</code>. <code>set_byte</code> copies the whole value before changing the byte. 4 iterations, 4 copies of the buffer.</p>
         <p>compiling doom’s c engine to wasm was one option. i’d write an interpreter in postgres to carry out the compiled instructions, including memory reads and writes like these. the original engine would still be deciding what to read, what to write, and how often to do it.</p>
@@ -34,6 +34,83 @@
         <p>one of my early builds at 160×100 got <strong>0.25 fps</strong>. that’s 3 new frames in 12 seconds.</p>
         <p>okay, say i double it. i get a new frame every 2 seconds. double it again and i’m at 1 fps. try aiming at a monster that gets a whole second to move before you see where it went.</p>
         <p>i had a lot of code to go back through. at least i knew who wrote it.</p>
+
+        <h2 id="the-cost-of-taking-a-step" tabindex="-1">the cost of taking a step</h2>
+        <p>i profiled 350 game updates without drawing a single frame. postgres spent 452 ms in the game update function. 379 ms of that was in <code>try_move</code>, where the game decides whether the player or a monster can take its next step.</p>
+        <p>for a short move, i only need the walls close enough to get in the way. doom uses a grid to find them. i put a grid over the map too and gave each cell a list of the walls that touch it.</p>
+
+        <figure class="collision-grid">
+          <img src="../../assets/collision-grid.svg" width="392" height="248" loading="lazy" alt="top-down sketch of two rooms joined by a corridor. the arrow sits inside one shaded grid cell. the two corridor walls crossing that cell are highlighted.">
+          <figcaption>the arrow is the step i’m checking. the shaded cell gives me the two walls in yellow.</figcaption>
+        </figure>
+
+        <p>each cell in my grid held wall ids. postgres joined those ids back to the map tables to get the wall’s endpoints and find the sectors on either side.</p>
+        <p>the next step could take me past the same wall. postgres would do those joins again. i already had the endpoints when i loaded the map. why was i looking them up during play?</p>
+        <p>i was already going through every wall to build the grid, so i changed what went into each cell.</p>
+
+        <pre><code class="language-sql"><span class="syntax-comment">-- before</span>
+<span class="syntax-call">array_agg</span>(
+    line.id <span class="syntax-keyword">order by</span> line.id
+)
+
+<span class="syntax-comment">-- after</span>
+<span class="syntax-call">array_agg</span>(
+    <span class="syntax-keyword">row</span>(
+        line.id,
+        <span class="syntax-call">lseg</span>(line.a, line.b),
+        front.sector,
+        back.sector,
+        line.flags
+    )::doom.boundary
+    <span class="syntax-keyword">order by</span> line.id
+)</code></pre>
+
+        <figure class="collision-lookup">
+          <table aria-label="when postgres prepares the wall data">
+            <colgroup><col><col><col></colgroup>
+            <thead>
+              <tr>
+                <td></td>
+                <th scope="col">at map load</th>
+                <th scope="col">during a move</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">before</th>
+                <td>store wall ids</td>
+                <td>read ids <span class="collision-lookup-join"><span aria-hidden="true">→</span> join tables</span></td>
+              </tr>
+              <tr>
+                <th scope="row">after</th>
+                <td>store wall data</td>
+                <td>read wall data</td>
+              </tr>
+            </tbody>
+          </table>
+        </figure>
+
+        <p><code>lseg</code> makes a line segment from the wall’s two endpoints. postgres can now read that segment straight out of the cell. if the wall is farther from the path than the player’s radius, i can skip it.</p>
+        <p>sectors each have their own floor and ceiling heights. if a nearby wall has a sector on both sides and its flags allow crossing, postgres still reads those heights from the current game state. a door can open while i’m walking toward it.</p>
+        <p>postgres still had to work out which cells to read. for a mostly horizontal step, the old query went column by column. it worked out which part of the path could reach each column, then used that part of the path and the player’s radius to generate the row numbers. for a mostly vertical step, it swapped rows and columns.</p>
+        <p>i already had the start and end of the move, so i took the rectangle around them and extended it by the player’s radius on all four sides. that gave me the first and last column and the first and last row. the cell lookup became two <code>between</code> conditions.</p>
+
+        <figure>
+          <div class="chapter-figure-pair">
+            <div>
+              <p>along the path</p>
+              <img src="../../assets/collision-path.svg" width="264" height="210" loading="lazy" alt="the dashed area follows the diagonal step and overlaps three cells. the upper left cell contains a wall and is outside the dashed area.">
+            </div>
+            <div>
+              <p>bounding box</p>
+              <img src="../../assets/collision-box.svg" width="264" height="210" loading="lazy" alt="for the same step, the dashed rectangle overlaps all four cells. the striped upper left cell is the extra one, and the wall in it is too far from the step to block it.">
+            </div>
+          </div>
+          <figcaption>each lookup selects the cells that overlap the area inside the dashed line. the bounding box reaches the striped cell too.</figcaption>
+        </figure>
+
+        <p>the wall in that extra cell is too far from the step and gets dropped by the distance check. i pay for one more segment test here and save the per-column calculations. a short step gives me a small box, so there’s little room for extra cells.</p>
+        <p>i ran the same 350 inputs again in a separate local test, with the same query plan settings on both versions. game updates went from <strong>540 ms to 67 ms</strong>. with a frame drawn after each update, the whole replay went from <strong>1.55 s to 1.11 s</strong>. the recorded game state and the rendered pixels matched at every step.</p>
       </article>
     </main>
   </body>
