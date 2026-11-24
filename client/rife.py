@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 import shutil
 from pathlib import Path
@@ -67,8 +68,6 @@ class Rife:
         ]
 
     def _rgb(self, image):
-        if (image.width, image.height) not in ((64, 40), (160, 100)):
-            raise ValueError("RIFE expects 64x40 or 160x100 RGB frames")
         return self._np.frombuffer(image.rgb, dtype=self._np.uint8).reshape(
             image.height, image.width, 3
         )
@@ -84,10 +83,10 @@ class Rife:
         import numpy as np
 
         h, w = rgb.shape[:2]
-        scale = 320 // w
-        pixels = rgb.repeat(scale, axis=0).repeat(scale, axis=1)
-        if scale == 2:
-            return Image(320, 200, pixels.tobytes())
+        scale = max(1, math.ceil(min(320 / w, 200 / h)))
+        pixels = rgb if scale == 1 else rgb.repeat(scale, axis=0).repeat(scale, axis=1)
+        if (w, h) != (64, 40):
+            return Image(w * scale, h * scale, pixels.tobytes())
         blocks = pixels.reshape(h, 5, w, 5, 3)
         padded = np.pad(rgb, ((1, 1), (1, 1), (0, 0)), mode="edge")
         top, bottom = padded[:-2, 1:-1], padded[2:, 1:-1]

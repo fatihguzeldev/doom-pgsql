@@ -94,3 +94,10 @@ class RifeModelsTest(unittest.TestCase):
         self.assertTrue((np.diff(centers) > 0).all())
         with self.assertRaisesRegex(ValueError, "matching dimensions"):
             net.infer_pair(Image(64, 40, pixels.tobytes()), last)
+
+        rgb = native[39:, 63:]
+        first = Image(97, 61, rgb.tobytes())
+        last = Image(97, 61, np.roll(rgb, 3, axis=1).tobytes())
+        frames = net.infer_pair(first, last)
+        self.assertEqual(frames[-1], net.upscale(last))
+        self.assertTrue(all((f.width, f.height) == (388, 244) for f in frames))
