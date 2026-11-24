@@ -199,6 +199,61 @@
         <p>each screen row contributes its own cutoffs. put them all in order and, between any two neighbors, every row keeps picking the same texel relative to eye height. that gives me a table of slice offsets for each interval. during a frame, postgres finds the interval for the wall’s step and uses those offsets to take four bytes at a time. near a cutoff, a tiny floating-point difference can pick the neighboring texel, so the regular sampler takes over.</p>
 
         <p>i timed three passes through the same e1m3 route with the room cache off. drawing 1,025 frames took a median of <strong>2.74 s</strong> with single-byte updates, <strong>2.55 s</strong> with eight-byte updates, and <strong>2.37 s</strong> with the prepared strips added. the savings vary by level. in e1m3, the prepared strips took about <strong>9 MiB</strong> of extra texture storage. across two levels, i checked 1,709 frames and got the same pixels and shades from all three versions.</p>
+
+        <h2 id="how-a-keypress-gets-through" tabindex="-1">how a keypress gets through</h2>
+        <p>say i’ve asked postgres for a frame. before it comes back, i press <code>w</code>. with one connection and one request at a time, my move would sit on my machine until the frame arrived. then it would make a round trip of its own.</p>
+        <p>the client opens two connections to postgres. the frame loop asks for a picture on one connection and waits for it to come back. meanwhile, the input loop is still running. if i press <code>w</code>, it can send my move on the other connection while the frame is still on its way.</p>
+
+        <figure>
+          <img src="../../assets/key-to-send.png" width="500" height="182" loading="lazy" alt="with one connection, the client waits for the frame before sending the move. with two connections, it can send the move right away.">
+        </figure>
+
+        <p>i tried both setups with 50 ms of simulated round-trip time and queued a move 10 ms after asking for a frame. i timed the wait from when the move was ready to send until postgres replied. across 8 runs of each setup, the median was <strong>104 ms with one connection and 52 ms with two</strong>.</p>
+        <p>the input reply tells me postgres has processed my move. the frame i’d already asked for still came back showing where i was standing before it.</p>
+        <p>the client aims to sample the controls 35 times a second, once for each game update. doom calls those updates <em>tics</em>. at 50 ms rtt, if i send one command and wait for its reply before sending the next, i can get through at most 20 commands a second. the client would be adding commands to its queue faster than it could send them. once those two slots filled up, it would have to wait for room before sampling the controls again. so when 2 commands are waiting, i send both in one request and wait for one reply.</p>
+        <p>if a request carries the commands for tics 41 and 42, postgres commits them one at a time. the changes to the game from tic 41 and the number <code>41</code> go into the same transaction. as soon as that transaction commits, a new frame request can see the game at tic 41 while tic 42 is still running.</p>
+        <p>what if the connection drops before the reply comes back? did either command go through? the client reconnects and sends both again with the same tic numbers. if postgres has <code>41</code> saved as the last tic, it knows the changes from tic 41 committed too. it can skip 41 and pick up at 42.</p>
+
+        <figure>
+          <table aria-label="what happens to each tic when the client retries">
+            <thead>
+              <tr>
+                <td></td>
+                <th scope="col">tic 41</th>
+                <th scope="col">tic 42</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">first request</th>
+                <td>committed</td>
+                <td>uncommitted</td>
+              </tr>
+              <tr>
+                <th scope="row">same request on retry</th>
+                <td>skipped</td>
+                <td>committed</td>
+              </tr>
+            </tbody>
+          </table>
+        </figure>
+
+        <p>i tested this with a batch of turns. i cut the connection after postgres had committed some of them, then resent the whole batch. the player ended up facing exactly the same way as in the run i let finish.</p>
+
+        <h2 id="sending-only-what-changed" tabindex="-1">sending only what changed</h2>
+        <p>the imp’s halfway behind the pillar now. my client still has the frame where it’s standing out in the open. i need to send the bit of floor it was covering and the part of the imp that’s still visible. the rest of the room is already there.</p>
+        <p>postgres already lays out the frame in columns. i group 8 columns into a strip. the first time the client asks for a frame, postgres sends the whole picture and a hash of the color and lighting bytes in each strip.</p>
+        <p>on the next request, the client sends those hashes back. postgres draws the new frame and compares the strips against what the client has. for each strip that changed, it sends the new bytes and where they go. the client replaces those columns in the picture it already has.</p>
+
+        <figure>
+          <img src="../../assets/frame-delta.png" width="664" height="242" loading="lazy" alt="the previous frame on the left. on the right, only the six strips postgres sends after the imp moves behind the pillar.">
+        </figure>
+
+        <p>the imp’s move changed <strong>6 of the 20 strips</strong>. counting the request and reply together, that update went from <strong>33.1 kB to 12.3 kB</strong>. the client ended up with the same frame, byte for byte.</p>
+        <p>if i turn the camera and every strip changes, the whole picture goes over the connection again, along with the hashes.</p>
+
+        <p>there are a bunch of other little changes in the engine. i picked the ones i had the most fun figuring out. you can read the source for all of them on <a href="https://github.com/fatihguzeldev/doom-pgsql">github</a>.</p>
+        <p>i’ve been saving my favorite part for the next chapter. if postgres gives me two frames, can i sneak a third one in between?</p>
       </article>
     </main>
   </body>
