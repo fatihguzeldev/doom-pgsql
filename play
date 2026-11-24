@@ -7,8 +7,8 @@ args=()
 use_db=true
 rife=false
 export DOOM_PLAY_VARIANT=
-build=(--build)
 run_options=()
+help=false
 sound=true
 while (( $# )); do
     arg=$1
@@ -29,7 +29,7 @@ while (( $# )); do
             args+=(--wad)
             arg=/app/assets/doom1.wad
             ;;
-        --help|-h) sound=false; use_db=false; build=() ;;
+        --help|-h) sound=false; use_db=false; help=true ;;
         --mute) sound=false ;;
         --dsn|--dsn=*) use_db=false ;;
         --rife)
@@ -41,26 +41,95 @@ while (( $# )); do
     shift
 done
 
+runtime=
+animator=
+listener=
+steps=0
+total_steps=2
 if [[ $use_db == true ]]; then
-    "${compose[@]}" up -d --wait db
-    "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom -f /app/engine/bootstrap.sql
+    total_steps=4
 else
     # compose validates the db service even when only the remote client runs
     export DOOM_DB_CPUS=0 DOOM_DB_RAM=0 DOOM_DB_RAM_SWAP=0
     run_options+=(-e DOOM_DSN)
 fi
 
+if [[ $help == true ]]; then
+    exec "${compose[@]}" run --rm "${run_options[@]}" play "${args[@]}"
+fi
+
+stop_animation() {
+    if [[ -n $animator ]]; then
+        kill "$animator" 2>/dev/null || true
+        wait "$animator" 2>/dev/null || true
+        animator=
+    fi
+}
+
+cleanup() {
+    local status=$?
+    stop_animation
+    if [[ -n $listener ]]; then
+        kill "$listener" 2>/dev/null || true
+        wait "$listener" 2>/dev/null || true
+    fi
+    printf '\033[0m\033[?25h\033[?1049l'
+    if (( status != 0 && status != 130 && status != 143 && status != 129 )) && [[ -s $runtime/log ]]; then
+        tail -n 20 "$runtime/log" >&2
+    fi
+    rm -rf "$runtime"
+}
+
+if [[ -t 0 && -t 1 ]]; then
+    source "$repo/client/loading.sh"
+    compose+=(--progress=quiet)
+    runtime=$(mktemp -d)
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    echo 0 > "$runtime/steps"
+    printf '\033[?1049h\033[?25l\033[48;2;18;14;23m\033[2J'
+    read -r rows cols < <(stty size)
+    boot_frame 0 "$total_steps" 0 "$rows" "$cols"
+    animate_boot <&1 &
+    animator=$!
+fi
+
+prepare() {
+    if [[ -n $runtime ]]; then
+        "$@" > "$runtime/log" 2>&1
+        steps=$((steps+1))
+        echo "$steps" > "$runtime/steps"
+    else
+        "$@"
+    fi
+}
+
+if [[ $use_db == true ]]; then
+    prepare "${compose[@]}" up -d --wait db
+    prepare "${compose[@]}" exec -T db psql -Xq -v ON_ERROR_STOP=1 -v rife="$rife" -U postgres -d doom -f /app/engine/bootstrap.sql
+fi
+prepare "${compose[@]}" build play
+
+if [[ -z $runtime ]]; then
+    exec "${compose[@]}" run --rm "${run_options[@]}" play "${args[@]}"
+fi
+
 # the container cannot access the host's audio device
-if [[ $sound == true && -t 0 && -t 1 ]]; then
+if [[ $sound == true ]]; then
     for player in afplay paplay aplay; do
         command -v "$player" >/dev/null || continue
-        audio=$(mktemp -d)
-        touch "$audio/events"
-        bash "$repo/client/audio.sh" "$audio" "$player" &
+        mkdir "$runtime/audio"
+        touch "$runtime/audio/events"
+        bash "$repo/client/audio.sh" "$runtime/audio" "$player" &
         listener=$!
-        trap 'kill "$listener" 2>/dev/null || true; wait "$listener" 2>/dev/null || true; rm -rf "$audio"' EXIT
-        "${compose[@]}" run --rm "${build[@]}" "${run_options[@]}" -v "$audio:/audio" -e DOOM_AUDIO_DIR=/audio play "${args[@]}"
-        exit
+        run_options+=(-v "$runtime/audio:/audio" -e DOOM_AUDIO_DIR=/audio)
+        break
     done
 fi
-exec "${compose[@]}" run --rm "${build[@]}" "${run_options[@]}" play "${args[@]}"
+
+stop_animation
+read -r rows cols < <(stty size)
+boot_frame "$steps" "$total_steps" 0 "$rows" "$cols"
+"${compose[@]}" run --rm --quiet-pull -e DOOM_LAUNCH_STEPS="$steps" "${run_options[@]}" play "${args[@]}" 2>"$runtime/log"

@@ -191,8 +191,16 @@ def render_resolution(dsn, override, rife):
     raise ValueError("expected WIDTHxHEIGHT, with width 1..4096 and height 8..4096")
 
 
+class PlayParser(argparse.ArgumentParser):
+    def error(self, message):
+        if os.environ.get("DOOM_LAUNCH_STEPS"):
+            sys.stdout.write("\x1b[0m\x1b[?25h\x1b[?1049l")
+            sys.stdout.flush()
+        super().error(message)
+
+
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Play SQL Doom in a truecolor terminal.")
+    parser = PlayParser(description="Play SQL Doom in a truecolor terminal.")
     missing_dsn = object()
     parser.add_argument(
         "--dsn", nargs="?", metavar="CONNECTION", const=os.environ.get("DOOM_DSN") or missing_dsn,

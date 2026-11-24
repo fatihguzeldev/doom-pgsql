@@ -234,7 +234,9 @@ def screen(keyboard):
         mode[0] &= ~termios.IXON
         termios.tcsetattr(fd, termios.TCSANOW, mode)
         loop.add_reader(fd, keyboard.receive)
-        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1004h\x1b[>11u\x1b[?u")
+        if not os.environ.get("DOOM_LAUNCH_STEPS"):
+            sys.stdout.write("\x1b[?1049h")
+        sys.stdout.write("\x1b[?25l\x1b[?1004h\x1b[>11u\x1b[?u")
         sys.stdout.flush()
         yield
     finally:
